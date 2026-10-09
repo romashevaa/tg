@@ -14,6 +14,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import escape
+from tv_signal_review import review, review_html
 
 log = logging.getLogger('tv-alerts')
 API = 'https://www.tradingview.com/api/v1/ideas/'
@@ -113,10 +114,12 @@ def discover(db, existing_ids, fetch=None, author_name=AUTHOR):
     initialize(db)
     entries = fetch() if fetch is not None else fetch_latest(author_name=author_name)
     ideas = {}
+    source_entries = {}
     for entry in entries:
         record = unpack(entry, author_name=author_name)
         if record:
             ideas[record[0]] = record[1:]
+            source_entries[record[0]] = entry
     if entries and not ideas:
         raise RuntimeError('TradingView API returned entries, but no recognizable idea URLs; inspect API schema')
     # Preserve AltSignals baseline from previous deployments; new authors get their own baseline.
@@ -142,7 +145,7 @@ def discover(db, existing_ids, fetch=None, author_name=AUTHOR):
             recent_first_sync = False
             if baseline:
                 from tv_last_hour import published_at
-                source_entry = next((e for e in entries if unpack(e, author_name=author_name) and unpack(e, author_name=author_name)[0] == idea_id), None)
+                source_entry = source_entries.get(idea_id)
                 published = published_at(source_entry) if source_entry else None
                 recent_first_sync = bool(published and datetime.now(timezone.utc) - timedelta(hours=1) <= published <= datetime.now(timezone.utc) + timedelta(minutes=5))
             if not baseline or recent_first_sync:
@@ -150,7 +153,7 @@ def discover(db, existing_ids, fetch=None, author_name=AUTHOR):
                            (escape(title[:180]) + '\n' if title else '') +
                            '<a href="' + escape(url, quote=True) + '">Відкрити TradingView</a>')
                 db.execute('INSERT OR IGNORE INTO tv_alert_outbox(alert_key,text,created_utc) VALUES (?,?,?)',
-                           ('idea:' + idea_id, message, now()))
+                           ('idea:' + idea_id, message + review_html(review(source_entries[idea_id])), now()))
         if baseline:
             db.execute('INSERT OR REPLACE INTO tv_alert_state VALUES (?,?)', (state_key, '1'))
     log.info('TV discovery [%s]: API entries=%s valid=%s added=%s baseline=%s',

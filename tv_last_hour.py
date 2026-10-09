@@ -11,6 +11,7 @@ from pathlib import Path
 import os
 import tv_author_settings as settings
 import tv_auto_alerts as alerts
+from tv_signal_review import review, review_html
 
 
 def published_at(entry):
@@ -27,7 +28,7 @@ def published_at(entry):
     return None
 
 
-def run(data_dir='/data', hours=1, notify=False, fetch=None):
+def run(data_dir='/data', hours=1, notify=False, fetch=None, do_review=False):
     data = Path(data_dir)
     with sqlite3.connect(str(data/'signalbot.db'), timeout=15) as db:
         authors = settings.enabled_authors(db)
@@ -37,6 +38,7 @@ def run(data_dir='/data', hours=1, notify=False, fetch=None):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     matches = []
     eventdb = None
+    reviewed = []
     if notify:
         eventdb = sqlite3.connect(str(data/'tv_updates_monitor.sqlite'), timeout=15)
         alerts.initialize(eventdb)
@@ -51,6 +53,11 @@ def run(data_dir='/data', hours=1, notify=False, fetch=None):
                     if record and dt and cutoff <= dt <= datetime.now(timezone.utc) + timedelta(minutes=5):
                         recent.append((dt, author, *record))
                 matches.extend(recent)
+                if do_review:
+                    for dt, a, iid, url, title in recent:
+                        source = next((x for x in entries if (r := alerts.unpack(x, author_name=a)) and r[0] == iid), None)
+                        if source is not None:
+                            reviewed.append((a, iid, title, url, review(source)))
                 print(f'@{author}: checked={len(entries)}, published_last_{hours}h={len(recent)}')
             except Exception as exc:
                 print(f'@{author}: FAILED ({type(exc).__name__}: {exc})')
@@ -61,6 +68,13 @@ def run(data_dir='/data', hours=1, notify=False, fetch=None):
                 text = ('🆕 <b>Нова ідея ' + escape(author) + '</b> (за останню годину)\n'
                         + escape(title[:180]) + '\n<a href="' + escape(url, quote=True) + '">TradingView</a>')
                 alerts.enqueue(eventdb, 'idea:' + iid, text)
+        if do_review:
+            for author, iid, title, url, result in reviewed:
+                print(f"REVIEW @{author} {iid}: {result['status']} — {result['reason']}")
+                if notify:
+                    text = ('🔎 <b>Перевірка ' + escape(author) + '</b>\n' + escape(title[:180]) +
+                            review_html(result) + '\n<a href="' + escape(url, quote=True) + '">TradingView</a>')
+                    alerts.enqueue(eventdb, 'review:' + iid, text)
         if notify:
             alerts.deliver(eventdb)
             print('Recent posts queued for delivery; duplicates ignored')
@@ -75,5 +89,6 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--hours', type=float, default=1)
     ap.add_argument('--notify', action='store_true')
+    ap.add_argument('--review', action='store_true', help='Review explicit ENTRY/SL/TP, no AI or trades')
     args = ap.parse_args()
-    run(os.environ.get('SIGNALBOT_DATA_DIR', '/data'), args.hours, args.notify)
+    run(os.environ.get('SIGNALBOT_DATA_DIR', '/data'), args.hours, args.notify, do_review=args.review)
