@@ -225,6 +225,43 @@ class BingX:
                 return float(row.get("free") or 0)
         return 0.0
 
+    async def futures_positions(self, symbol: str | None = None) -> list[dict]:
+        """Read actual exchange positions; exclude zero-quantity records."""
+        data = await self._request('GET', '/openApi/swap/v2/user/positions',
+                                   {'symbol': symbol} if symbol else None)
+        if isinstance(data, dict):
+            data = data.get('positions', data.get('position', []))
+        if isinstance(data, dict):
+            data = [data]
+        return [p for p in (data or []) if float(p.get('positionAmt') or 0) != 0]
+
+    async def futures_open_orders(self, symbol: str | None = None) -> list[dict]:
+        """Read outstanding exchange orders, including protective orders if returned."""
+        data = await self._request('GET', '/openApi/swap/v2/trade/openOrders',
+                                   {'symbol': symbol} if symbol else None)
+        if isinstance(data, dict):
+            data = data.get('orders', data.get('order', []))
+        if isinstance(data, dict):
+            data = [data]
+        return list(data or [])
+
+    async def futures_order(self, symbol: str, order_id: str | int | None = None,
+                            client_order_id: str | None = None) -> dict:
+        """Query an entry order's actual exchange status (NEW, FILLED, etc.)."""
+        if (order_id is None) == (client_order_id is None):
+            raise ValueError('Supply exactly one of order_id or client_order_id')
+        params = {'symbol': symbol}
+        if order_id is not None:
+            params['orderId'] = order_id
+        else:
+            params['clientOrderId'] = client_order_id
+        data = await self._request('GET', '/openApi/swap/v2/trade/order', params)
+        if isinstance(data, dict) and isinstance(data.get('order'), dict):
+            return data['order']
+        if not isinstance(data, dict):
+            raise ValueError('Unexpected BingX order response')
+        return data
+
     async def open_positions(self) -> int:
         data = await self._request("GET", "/openApi/swap/v2/user/positions")
         return sum(1 for p in data or [] if float(p.get("positionAmt") or 0) != 0)
