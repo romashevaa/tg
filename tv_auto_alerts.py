@@ -58,7 +58,7 @@ def unpack(entry):
     if not isinstance(entry, dict):
         return None
     data = entry.get('data') if isinstance(entry.get('data'), dict) else entry
-    idea_id = str(data.get('id') or data.get('idea_id') or entry.get('id') or '')
+    idea_id = str(data.get('image_url') or data.get('idea_id') or '')
     title = str(data.get('name') or data.get('title') or entry.get('name') or '')
     author = data.get('author') or entry.get('author') or data.get('user')
     if isinstance(author, dict):
@@ -66,7 +66,7 @@ def unpack(entry):
     # API is already filtered by author; if an author is present, verify it.
     if isinstance(author, str) and author.lower() != AUTHOR.lower():
         return None
-    candidates = [data.get('url'), data.get('short_url'), data.get('link'),
+    candidates = [data.get('chart_url'), data.get('url'), data.get('short_url'), data.get('link'),
                   entry.get('url'), entry.get('short_url'), entry.get('link')]
     url = next((v for v in (normalized_url(u) for u in candidates) if v), '')
     if not url:
