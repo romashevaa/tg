@@ -49,7 +49,60 @@ class Timeline(HTMLParser):
         self.handle_starttag(tag,attrs);self.handle_endtag(tag)
 
 def parse(page):
-    p=Timeline();p.feed(page);return p.rows
+    p = Timeline()
+    p.feed(page)
+    if p.rows:
+        return p.rows
+
+    from html.parser import HTMLParser
+
+    class OriginalIdea(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack = []
+            self.text = []
+            self.date = ""
+            self.collecting = False
+
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            classes = a.get("class", "").split()
+
+            if tag == "time" and a.get("datetime") and not self.date:
+                self.date = a["datetime"]
+
+            if not self.collecting and any(c.startswith("ast-") for c in classes):
+                self.collecting = True
+                self.stack = [tag]
+            elif self.collecting:
+                self.stack.append(tag)
+                if tag == "br":
+                    self.text.append("\\n")
+
+        def handle_data(self, data):
+            if self.collecting:
+                self.text.append(data)
+
+        def handle_endtag(self, tag):
+            if self.collecting and self.stack:
+                self.stack.pop()
+                if not self.stack:
+                    self.collecting = False
+
+    original = OriginalIdea()
+    original.feed(page)
+
+    text = " ".join("".join(original.text).split())
+
+    if original.date and text:
+        return [{
+            "time": original.date,
+            "status": "",
+            "text": text,
+            "images": []
+        }]
+
+    return []
 
 def get_page(url):
     parsed=urllib.parse.urlparse(url)
