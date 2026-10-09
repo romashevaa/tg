@@ -78,6 +78,7 @@ Classification safety rules (apply before extracting order levels):
 - Assess confidence in faithful reading, NOT the probability that a trade will win.
 
 Reading rules:
+- margin_type: return "ISOLATED" if the author explicitly says Isolated/ISO, "CROSSED" if the author explicitly says Cross/Crossed. If neither is specified, return null. Never infer margin mode from leverage or market type.
 - Copy every price exactly as written. Take numbers only from the message, the attached \
 TradingView text or the attached images. If a level is not stated, return null. Do not compute, \
 round or estimate levels, and do not convert percentages into prices.

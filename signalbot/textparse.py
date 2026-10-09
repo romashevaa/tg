@@ -297,3 +297,16 @@ def _block(segment: str) -> str:
         elif not seen:
             out.append(line)
     return "\n".join(out)
+
+
+def find_margin_type(text: str) -> str | None:
+    """Extract explicitly stated margin mode; never guess."""
+    import re
+
+    isolated = bool(re.search(r"\b(?:isolated|iso)\b", text, re.I))
+    crossed = bool(re.search(r"\b(?:cross|crossed)\b", text, re.I))
+
+    if isolated == crossed:
+        return None
+
+    return "ISOLATED" if isolated else "CROSSED"

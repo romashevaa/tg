@@ -20,18 +20,21 @@ class Executor:
         # BingX simulated trading (VST) exists for futures only.
         return self.mode == "demo" and market == "futures"
 
-    async def open(self, plan: OrderPlan, info: MarketInfo, cfg: Config) -> tuple[str, dict]:
+    async def open(self, plan: OrderPlan, info: MarketInfo, cfg: Config, margin_type: str | None = None) -> tuple[str, dict]:
         if not self.is_real(plan.market):
             return "shadow", {"shadow": True, "plan": asdict(plan)}
         if plan.market == "futures":
-            return "executed", await self.exchange.open_futures(plan, cfg.risk.margin_type)
+            return "executed", await self.exchange.open_futures(plan, margin_type or cfg.risk.margin_type)
         return "executed", await self.exchange.open_spot(plan, info, cfg.risk.spot_slippage_pct)
 
     async def close(self, plan: OrderPlan, info: MarketInfo | None) -> tuple[str, dict]:
         if not self.is_real(plan.market):
             return "closed", {"shadow": True}
         if plan.market == "futures":
-            return "closed", await self.exchange.close_futures(plan.symbol)
+            raise RuntimeError(
+                "Live futures close blocked: close_futures currently closes all positions for a symbol; "
+                "implement positionSide-scoped reduce-only closure first"
+            )
         if info is None:
             raise RuntimeError(f"{plan.symbol} is not tradable on spot right now")
         return "closed", await self.exchange.close_spot(plan.symbol, plan.quantity, info)

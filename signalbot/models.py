@@ -56,6 +56,7 @@ class ParsedSignal(BaseModel):
     stop_loss: float | None
     take_profits: list[float] = Field(description="Targets in the order the author lists them")
     leverage: int | None
+    margin_type: Literal["ISOLATED", "CROSSED"] | None = Field(default=None, description="Explicit margin mode of the author only; null if absent or ambiguous")
     update_action: Literal["none", "close", "move_sl", "cancel", "partial_close", "other"]
     update_stop_loss: float | None
     refers_to_message_id: int | None = Field(description="Earlier channel message this one is about")

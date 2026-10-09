@@ -72,6 +72,19 @@ def build_plan(
     sl = sig.stop_loss
     tp = pick_take_profit(sig.take_profits, cfg.take_profit)
 
+    if sig.side not in ("long", "short"):
+        raise PlanError("невідомий напрямок угоди")
+    if sl is not None and (not math.isfinite(sl) or sl <= 0 or
+                           (sl >= entry if sig.side == "long" else sl <= entry)):
+        raise PlanError("stop loss має бути по правильний бік ціни входу")
+    if tp is not None and (not math.isfinite(tp) or tp <= 0 or
+                           (tp <= entry if sig.side == "long" else tp >= entry)):
+        raise PlanError("take profit має бути по правильний бік ціни входу")
+    if sl is not None and round(sl, info.price_precision) == round(entry, info.price_precision):
+        raise PlanError("stop loss збігається з входом після округлення")
+    if tp is not None and round(tp, info.price_precision) == round(entry, info.price_precision):
+        raise PlanError("take profit збігається з входом після округлення")
+
     if equity <= 0:
         raise PlanError("немає вільного балансу")
 

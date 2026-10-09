@@ -16,7 +16,7 @@ from .models import Channel, Decision, OrderPlan, ParsedSignal, TgMessage, TvIde
 from .numbers import numbers_in_text, ungrounded
 from .storage import Storage, now
 from .models import HistSignal
-from .textparse import FOREX_RE, RESULT_RE, bare_call, URL_RE, find_coin, find_side, looks_like_call, parse_call
+from .textparse import FOREX_RE, RESULT_RE, bare_call, URL_RE, find_coin, find_side, looks_like_call, parse_call, find_margin_type
 from .telegram import message_link
 from .tradingview import find_tv_links
 from .validator import decide, market_for, symbol_for
@@ -57,6 +57,7 @@ def call_to_parsed(call, text: str) -> ParsedSignal:
         entry_low=min(call.entries) if call.entries else None,
         entry_high=max(call.entries) if call.entries else None,
         stop_loss=call.stop_loss, take_profits=call.take_profits, leverage=call.leverage,
+        margin_type=find_margin_type(text),
         update_action="none", update_stop_loss=None, refers_to_message_id=None,
         numbers_from_image=False, stale_hints=[], reason=RULES_REASON,
     )
@@ -244,7 +245,7 @@ class Pipeline:
         status, response = {"execute": "pending", "manual": "awaiting", "reject": "rejected"}[decision.action], None
         if decision.action == "execute":
             try:
-                status, response = await self.executor.open(plan, info, cfg)
+                status, response = await self.executor.open(plan, info, cfg, sig.margin_type)
             except Exception as e:
                 status, response = "error", {"error": str(e)}
         entry = plan.entry_price if plan else (sig.entry_low or sig.entry_high)
@@ -331,7 +332,7 @@ class Pipeline:
             self.storage.set_signal_status(signal_id, "rejected")
             return f"⛔ #{signal_id} вже не можна виконати: " + "; ".join(decision.reasons)
         try:
-            status, response = await self.executor.open(decision.plan, info, cfg)
+            status, response = await self.executor.open(decision.plan, info, cfg, sig.margin_type)
         except Exception as e:
             status, response = "error", {"error": str(e)}
         self.storage.db.execute(

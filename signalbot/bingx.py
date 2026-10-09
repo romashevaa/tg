@@ -240,13 +240,12 @@ class BingX:
         hedge = await self.hedge_mode()
         position_side = ("LONG" if long else "SHORT") if hedge else "BOTH"
 
-        try:
-            await self._request(
-                "POST", "/openApi/swap/v2/trade/marginType", {"symbol": plan.symbol, "marginType": margin_type}
-            )
-        except BingXError:
-            # Fails when the mode is already set or a position exists; the current mode stays.
-            pass
+        if margin_type not in ("ISOLATED", "CROSSED"):
+            raise ValueError("Invalid margin mode")
+        # Fail closed on a rejected switch; never silently trade using an unverified mode.
+        await self._request(
+            "POST", "/openApi/swap/v2/trade/marginType", {"symbol": plan.symbol, "marginType": margin_type}
+        )
         await self._request(
             "POST",
             "/openApi/swap/v2/trade/leverage",
