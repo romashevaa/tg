@@ -18,7 +18,10 @@ class Timeline(HTMLParser):
         if tag=='div' and any(v.startswith('timelineItem-') for v in cls.split()) and self.current is None:
             self.current={'time':'','status':'','text':[],'images':[],'_depth':len(self.stack)}
         if self.current is not None:
-            if tag=='relative-time': self.current['time']=a.get('event-time','')
+            if tag=='relative-time':
+                self.current['time']=a.get('event-time','')
+            if tag=='time' and a.get('datetime'):
+                self.current['time']=a['datetime']
             if tag=='img' and a.get('src'): self.current['images'].append(a['src'])
             if tag=='br' and self._inside('ast-'): self.current['text'].append('\n')
         self.stack.append((tag,cls))
