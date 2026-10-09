@@ -313,6 +313,38 @@ class BingX:
         data = await self._request("POST", "/openApi/swap/v2/trade/order", params)
         return data.get("order", data) if isinstance(data, dict) else {"raw": data}
 
+    async def prepare_hedge_close(self, symbol: str, side: str, expected_quantity: float) -> dict:
+        """Read-only preflight: close only an exactly matched Hedge leg.
+
+        No writes. If the live quantity changed or multiple legs are present,
+        require a fresh manual decision instead of guessing.
+        """
+        if not SYMBOL_RE.fullmatch(symbol) or side not in ("long", "short"):
+            raise ValueError("Invalid symbol or side")
+        if not await self.hedge_mode():
+            raise RuntimeError("Expected BingX Hedge Mode; refusing to close")
+        matching_side = side.upper()
+        positions = await self.futures_positions(symbol)
+        matches = [p for p in positions if p.get("symbol") == symbol
+                   and str(p.get("positionSide", "")).upper() == matching_side
+                   and abs(float(p.get("positionAmt") or 0)) > 0]
+        if len(matches) != 1:
+            raise RuntimeError("Cannot identify exactly one open Hedge leg for closing")
+        actual = abs(float(matches[0]["positionAmt"]))
+        if expected_quantity <= 0 or abs(actual - expected_quantity) > max(1e-9, actual * 1e-6):
+            raise RuntimeError("Actual position size differs from recorded plan; manual reconciliation required")
+        return {"symbol": symbol, "side": "SELL" if side == "long" else "BUY",
+                "positionSide": matching_side, "type": "MARKET", "quantity": actual}
+
+    async def close_hedge_exact(self, symbol: str, side: str, expected_quantity: float) -> dict:
+        """Close one verified Hedge leg; do not cancel unrelated symbol-wide orders."""
+        params = await self.prepare_hedge_close(symbol, side, expected_quantity)
+        return await self._request("POST", "/openApi/swap/v2/trade/order", params)
+
+    async def futures_margin_mode(self, symbol: str):
+        """Read current exchange margin mode, without modification."""
+        return await self._request("GET", "/openApi/swap/v2/trade/marginType", {"symbol": symbol})
+
     async def close_futures(self, symbol: str) -> dict:
         """Cancel resting orders for the symbol and close its position at market."""
         cancelled = await self._request("DELETE", "/openApi/swap/v2/trade/allOpenOrders", {"symbol": symbol})

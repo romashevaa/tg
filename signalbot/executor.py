@@ -31,10 +31,11 @@ class Executor:
         if not self.is_real(plan.market):
             return "closed", {"shadow": True}
         if plan.market == "futures":
-            raise RuntimeError(
-                "Live futures close blocked: close_futures currently closes all positions for a symbol; "
-                "implement positionSide-scoped reduce-only closure first"
-            )
+            # Only close when the exchange Hedge leg exactly matches this plan.
+            # If orders filled partially or additional same-side trades were placed,
+            # fail closed instead of unintentionally closing another position.
+            result = await self.exchange.close_hedge_exact(plan.symbol, plan.side, plan.quantity)
+            return "closed", result
         if info is None:
             raise RuntimeError(f"{plan.symbol} is not tradable on spot right now")
         return "closed", await self.exchange.close_spot(plan.symbol, plan.quantity, info)
