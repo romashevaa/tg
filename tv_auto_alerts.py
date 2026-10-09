@@ -1,4 +1,4 @@
-"""AltSignals public idea discovery and durable owner-only Telegram notifications.
+"""Multi-author TradingView public idea discovery and owner-only Telegram notifications.
 
 No orders, no Gemini, no Telegram user-session access.  The existing monitor DB
 is the source of truth for discovery, deduplication and alert delivery.
@@ -18,11 +18,13 @@ from html import escape
 log = logging.getLogger('tv-alerts')
 API = 'https://www.tradingview.com/api/v1/ideas/'
 AUTHOR = 'Altsignals'
+AUTHORS = ('Altsignals', 'coinpediamarkets')
 IDEA_RE = re.compile(r'/chart/[^/]+/([A-Za-z0-9]{8})(?:[-/]|$)')
 
 
 def initialize(db):
     db.execute('CREATE TABLE IF NOT EXISTS tv_discovered (idea_id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, discovered_utc TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS tv_discovered_author (idea_id TEXT PRIMARY KEY, author TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS tv_alert_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     db.execute('''CREATE TABLE IF NOT EXISTS tv_alert_outbox (
         alert_key TEXT PRIMARY KEY, text TEXT NOT NULL, created_utc TEXT NOT NULL,
@@ -53,7 +55,7 @@ def normalized_url(url):
     return urllib.parse.urlunsplit(('https', 'www.tradingview.com', parsed.path, '', ''))
 
 
-def unpack(entry):
+def unpack(entry, author_name=AUTHOR):
     """Accept known public API wrappers but reject non-idea entries."""
     if not isinstance(entry, dict):
         return None
@@ -64,7 +66,7 @@ def unpack(entry):
     if isinstance(author, dict):
         author = author.get('username') or author.get('name') or author.get('login')
     # API is already filtered by author; if an author is present, verify it.
-    if isinstance(author, str) and author.lower() != AUTHOR.lower():
+    if isinstance(author, str) and author.lower() != author_name.lower():
         return None
     candidates = [data.get('chart_url'), data.get('url'), data.get('short_url'), data.get('link'),
                   entry.get('url'), entry.get('short_url'), entry.get('link')]
@@ -79,8 +81,8 @@ def unpack(entry):
     return idea_id, url, title
 
 
-def fetch_latest(per_page=50):
-    params = urllib.parse.urlencode({'page': 1, 'per_page': per_page, 'by': AUTHOR,
+def fetch_latest(per_page=50, author_name=AUTHOR):
+    params = urllib.parse.urlencode({'page': 1, 'per_page': per_page, 'by': author_name,
                                      'locale': 'en', 'q': ''})
     req = urllib.request.Request(API + '?' + params,
         headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
@@ -106,18 +108,20 @@ def enqueue(db, key, text):
                    (key, text, now()))
 
 
-def discover(db, existing_ids, fetch=fetch_latest):
+def discover(db, existing_ids, fetch=None, author_name=AUTHOR):
     """First successful discovery seeds silently. Subsequent discoveries notify."""
     initialize(db)
-    entries = fetch()
+    entries = fetch() if fetch is not None else fetch_latest(author_name=author_name)
     ideas = {}
     for entry in entries:
-        record = unpack(entry)
+        record = unpack(entry, author_name=author_name)
         if record:
             ideas[record[0]] = record[1:]
     if entries and not ideas:
         raise RuntimeError('TradingView API returned entries, but no recognizable idea URLs; inspect API schema')
-    ready = db.execute("SELECT value FROM tv_alert_state WHERE key='discovery_initialized'").fetchone()
+    # Preserve AltSignals baseline from previous deployments; new authors get their own baseline.
+    state_key = 'discovery_initialized' if author_name.lower() == AUTHOR.lower() else 'discovery_initialized:' + author_name.lower()
+    ready = db.execute('SELECT value FROM tv_alert_state WHERE key=?', (state_key,)).fetchone()
     baseline = ready is None
     added = 0
     with db:
@@ -125,20 +129,32 @@ def discover(db, existing_ids, fetch=fetch_latest):
             known = idea_id in existing_ids or db.execute(
                 'SELECT 1 FROM tv_discovered WHERE idea_id=?', (idea_id,)).fetchone()
             if known:
+                # Record author for existing discovered ideas when migrating from the single-author monitor.
+                if db.execute('SELECT 1 FROM tv_discovered WHERE idea_id=?', (idea_id,)).fetchone():
+                    db.execute('INSERT OR IGNORE INTO tv_discovered_author VALUES (?,?)', (idea_id, author_name))
                 continue
             db.execute('INSERT OR IGNORE INTO tv_discovered VALUES (?,?,?,?)',
                        (idea_id, url, title, now()))
+            db.execute('INSERT OR IGNORE INTO tv_discovered_author VALUES (?,?)', (idea_id, author_name))
             added += 1
-            if not baseline:
-                message = ('🆕 <b>Нова ідея AltSignals</b>\n' +
+            # On first subscription, recover posts published during the past hour,
+            # while keeping older history silent. No AI/trade execution.
+            recent_first_sync = False
+            if baseline:
+                from tv_last_hour import published_at
+                source_entry = next((e for e in entries if unpack(e, author_name=author_name) and unpack(e, author_name=author_name)[0] == idea_id), None)
+                published = published_at(source_entry) if source_entry else None
+                recent_first_sync = bool(published and datetime.now(timezone.utc) - timedelta(hours=1) <= published <= datetime.now(timezone.utc) + timedelta(minutes=5))
+            if not baseline or recent_first_sync:
+                message = ('🆕 <b>Нова ідея ' + escape(author_name) + '</b>\n' +
                            (escape(title[:180]) + '\n' if title else '') +
                            '<a href="' + escape(url, quote=True) + '">Відкрити TradingView</a>')
                 db.execute('INSERT OR IGNORE INTO tv_alert_outbox(alert_key,text,created_utc) VALUES (?,?,?)',
                            ('idea:' + idea_id, message, now()))
         if baseline:
-            db.execute("INSERT OR REPLACE INTO tv_alert_state VALUES ('discovery_initialized','1')")
-    log.info('TV discovery: API entries=%s valid=%s added=%s baseline=%s',
-             len(entries), len(ideas), added, baseline)
+            db.execute('INSERT OR REPLACE INTO tv_alert_state VALUES (?,?)', (state_key, '1'))
+    log.info('TV discovery [%s]: API entries=%s valid=%s added=%s baseline=%s',
+             author_name, len(entries), len(ideas), added, baseline)
     return added
 
 
@@ -157,7 +173,7 @@ def parse_time(value):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def update_alerts(db, idea_id, url, fresh_events, known_before, is_new_idea):
+def update_alerts(db, idea_id, url, fresh_events, known_before, is_new_idea, author_name=AUTHOR):
     """Only recent, strictly later updates on already-tracked ideas become alerts."""
     if not known_before or is_new_idea:
         return 0
@@ -174,7 +190,7 @@ def update_alerts(db, idea_id, url, fresh_events, known_before, is_new_idea):
         if not key_row:
             continue
         title = escape((row['status'] or 'Оновлення автора')[:120])
-        message = ('🔔 <b>Оновлення AltSignals</b>\n<b>' + title + '</b>\n' +
+        message = ('🔔 <b>Оновлення ' + escape(author_name) + '</b>\n<b>' + title + '</b>\n' +
                    escape(row['text'][:800]) + '\n' +
                    '<a href="' + escape(url, quote=True) + '">Відкрити TradingView</a>')
         enqueue(db, 'event:' + idea_id + ':' + key_row[0], message)

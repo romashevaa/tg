@@ -912,7 +912,8 @@ class Bot:
                 await self.send("Використання: /tvadd https://www.tradingview.com/u/Altsignals/")
                 return
             handle = self.tv_registry.add_author(arg)
-            await self.send(f"✅ Автор @{handle} збережений. Додай ідеї: /tvidea {handle} <TradingView URL>\nАвтоматичне сканування профілю вимкнене.")
+            author_settings.set_enabled(p.storage.db, handle, True)
+            await self.send(f"✅ @{handle}: автоматичний моніторинг увімкнено. Нові ідеї перевіряються щохвилини. Перевірка останньої години: python /app/tv_last_hour.py --notify")
         elif cmd == "/tvmonitors":
             rows = author_settings.list_authors(p.storage.db)
             await self.send("📡 TradingView моніторинг:\n" + "\n".join(
