@@ -1,0 +1,10 @@
+telethon>=1.45
+google-genai>=2.28
+anthropic>=1.11
+httpx>=0.28
+pydantic>=2.13
+python-dotenv>=1.0
+pytest>=8
+pytest-asyncio>=0.24
+# Intel Macs: newer cryptography has no prebuilt package for them
+cryptography<49; sys_platform == "darwin" and platform_machine == "x86_64"

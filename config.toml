@@ -1,0 +1,62 @@
+[app]
+db_path = "signalbot.db"
+history_limit = 300          # messages pulled when a channel is added
+context_messages = 8         # previous channel messages given to the model
+notify_ignored = false       # also report noise/analysis/promo messages
+check_messages = 10          # how many recent messages /check re-reads
+
+[ai]
+provider = "gemini"          # gemini | claude
+parse_model = "gemini-3.8-flash"
+onboard_model = "gemini-3.8-flash"
+fallback_model = "gemini-3.5-flash-lite"   # used when the main model is over quota (gemini only)
+requests_per_minute = 10     # keep at or below the free-tier limit shown in AI Studio (gemini only)
+min_confidence = 0.80
+min_confidence_image = 0.90  # when levels were read from a picture or chart
+
+[eval]
+history_messages = 1500      # how far back a channel is evaluated
+chunk_messages = 400         # messages per model request when collecting past calls
+horizon_days = 5             # a call still unresolved after this long is closed at the last price
+interval = "5m"              # candle size used for the replay
+fee_pct = 0.1                # round-trip trading fee, % of position value
+min_trades = 20              # fewer tested calls than this gives no verdict
+max_forward_lag_minutes = 20 # forwards older than this are showcases, not calls
+tv_ideas_checked = 200       # how many latest TradingView links are opened to look for levels
+image_posts_checked = 60     # how many photo posts one evaluation may send to the vision model (one paid request each)
+reveal_minutes = 5           # a "target hit" reply this soon after a post means the call was shown after the fact
+showcase_min_posts = 10      # this many after-the-fact posts (and few real calls) mark the channel as a showcase
+images_auto = true           # /eval reads pictures by itself when the text gave fewer calls than min_trades
+bare_calls_checked = 150     # how many latest calls without levels ("Buying $X here") get a price check
+
+[validator]
+max_age_minutes = 20         # age of the ORIGINAL post (forward date / TradingView publish date)
+entry_tolerance_pct = 0.4    # price this close to the entry zone counts as "at entry"
+min_rr = 0.8                 # reward:risk to the chosen take profit
+min_sl_distance_pct = 0.3
+max_sl_distance_pct = 15.0
+dedup_hours = 48
+dedup_price_tolerance_pct = 0.5
+require_stop_loss = true
+reject_forwards = false      # true = never trade forwarded posts
+
+[risk]
+default_market = "futures"   # used when neither the message nor the channel profile says
+risk_pct = 1.0               # % of equity lost if the stop loss is hit
+fixed_margin_usdt = 20.0     # used only when a signal has no stop loss and require_stop_loss = false
+max_margin_pct = 10.0        # cap on margin per trade, % of equity
+max_open_positions = 5
+default_leverage = 5
+max_leverage = 10
+use_signal_leverage = true   # take leverage from the message, capped by max_leverage
+margin_type = "ISOLATED"
+take_profit = "first"        # which target closes the position: first | middle | last
+limit_expiry_hours = 24      # evaluation: an entry order not filled in this time is dropped
+limit_when_price_ran = true  # price already left the entry zone -> rest a limit order at the zone edge
+spot_slippage_pct = 0.5      # spot stop-limit price offset below the trigger
+
+# Per-channel overrides, keyed by channel id or @username:
+# [channels."@some_channel".risk]
+# risk_pct = 0.5
+# [channels."@some_channel".validator]
+# max_age_minutes = 5
