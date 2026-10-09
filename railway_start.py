@@ -116,11 +116,31 @@ def watch_updates():
         db.close()
 
 
+def watch_full_reviews():
+    """Optional cached Gemini image+text reviews; never places orders."""
+    import asyncio
+    from tv_full_review import run
+    interval = max(60, int(os.getenv('TV_FULL_REVIEW_SECONDS', '60')))
+    max_ideas = max(1, min(10, int(os.getenv('TV_FULL_REVIEW_PER_CYCLE', '2'))))
+    log.info('TV full chart review started, interval=%ss, max_per_cycle=%s', interval, max_ideas)
+    while True:
+        started = time.monotonic()
+        try:
+            # Notification delivery is handled by the existing discovery watcher.
+            asyncio.run(run(hours=float(os.getenv('TV_FULL_REVIEW_LOOKBACK_HOURS', '1')), max_ideas=max_ideas, notify=True,
+                            data_dir=str(DATA), send_now=False))
+        except Exception as exc:
+            log.warning('TV full chart review failed (%s): %s', type(exc).__name__, str(exc)[:180])
+        time.sleep(max(1, interval - (time.monotonic() - started)))
+
+
 def main():
     guard()
     from signalbot.cli import main as bot_main
     threading.Thread(target=watch_discovery, daemon=True, name='tv-discovery').start()
     threading.Thread(target=watch_updates, daemon=True, name='tv-updates').start()
+    if os.getenv('TV_FULL_REVIEW_ENABLED', '0') == '1':
+        threading.Thread(target=watch_full_reviews, daemon=True, name='tv-full-review').start()
     sys.argv = ['signalbot', '--config', 'config.toml', 'run']
     bot_main()
 
