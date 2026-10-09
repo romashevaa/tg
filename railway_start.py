@@ -28,7 +28,7 @@ def guard():
 
 
 def watch():
-    interval = max(300, int(os.getenv('TV_POLL_SECONDS', '600')))
+    interval = max(60, int(os.getenv('TV_POLL_SECONDS', '60')))
     dbfile = DATA / 'signalbot.db'
     eventdb = monitor.init_db(str(DATA / 'tv_updates_monitor.sqlite'))
     alerts.initialize(eventdb)
