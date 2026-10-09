@@ -8,6 +8,7 @@ import re
 from telethon import Button, TelegramClient, events
 
 from .tv_registry import TvRegistry, parse_profile
+import tv_author_settings as author_settings
 from .tv_scanner import discover, ScanBlocked
 from .audit import analyze
 from .tv_review import review as review_tv
@@ -39,8 +40,11 @@ HELP = """Керування:
 /evalmonths <лінк> — звіт по місяцях за останні 365 днів (модельний)
 /export <лінк> — вивантажити історію каналу файлом
 /tv <лінк> — показати, що бот читає з TradingView-ідеї
-/tvadd <профіль> — зберегти TradingView-автора
-/tvauthors — список авторів
+/tvadd <профіль> — додати автора й увімкнути автоматичний моніторинг
+/tvmonitors — автори під автоматичним моніторингом
+/tvunmonitor <автор> — вимкнути моніторинг (історія зберігається)
+/tvmonitor <автор> — знову ввімкнути моніторинг
+/tvauthors — список збережених авторів
 /tvidea <автор> <ідея> — додати посилання на ідею
 /tvideas <автор> — список отриманих ідей
 /tvanalyze <автор> — аналіз 1 збереженої ідеї без ордерів
@@ -909,6 +913,16 @@ class Bot:
                 return
             handle = self.tv_registry.add_author(arg)
             await self.send(f"✅ Автор @{handle} збережений. Додай ідеї: /tvidea {handle} <TradingView URL>\nАвтоматичне сканування профілю вимкнене.")
+        elif cmd == "/tvmonitors":
+            rows = author_settings.list_authors(p.storage.db)
+            await self.send("📡 TradingView моніторинг:\n" + "\n".join(
+                ("🟢 " if enabled else "⚪️ ") + "@" + handle for handle, enabled in rows))
+        elif cmd in ("/tvmonitor", "/tvunmonitor"):
+            if not arg:
+                await self.send(f"Використання: {cmd} <TradingView профіль або username>")
+                return
+            handle = author_settings.set_enabled(p.storage.db, arg, cmd == "/tvmonitor")
+            await self.send(f"{'🟢 Увімкнено' if cmd == '/tvmonitor' else '⚪️ Вимкнено'} моніторинг @{handle}. Історія залишається в базі.")
         elif cmd == "/tvauthors":
             rows=self.tv_registry.authors()
             await self.send("📊 TradingView-автори:\n" + "\n".join(f"@{r['handle']} · {r['count']} ідей" for r in rows)

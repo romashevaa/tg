@@ -10,6 +10,7 @@ from pathlib import Path
 import tv_auto_alerts as alerts
 import tv_update_monitor as monitor
 import tv_watch_policy as policy
+import tv_author_settings as author_settings
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('railway')
@@ -40,7 +41,13 @@ def watch_discovery():
             try:
                 with sqlite3.connect(f'file:{DATA / "signalbot.db"}?mode=ro', uri=True, timeout=15) as source:
                     historical_ids = {r[0] for r in source.execute('SELECT idea_id FROM tv_ideas')}
-                alerts.discover(db, historical_ids)
+                with sqlite3.connect(str(DATA / 'signalbot.db'), timeout=15) as author_db:
+                    authors = author_settings.enabled_authors(author_db)
+                for author_name in authors:
+                    try:
+                        alerts.discover(db, historical_ids, author_name=author_name)
+                    except Exception as exc:
+                        log.warning('TV discovery [%s] failed (%s): %s', author_name, type(exc).__name__, exc)
                 alerts.deliver(db)
             except Exception as exc:
                 log.warning('TV discovery iteration failed (%s): %s', type(exc).__name__, exc)
@@ -65,6 +72,8 @@ def watch_updates():
                     historical = source.execute('SELECT idea_id,url FROM tv_ideas').fetchall()
                 historical_ids = {idea_id for idea_id, _ in historical}
                 discovered = alerts.all_discovered(db)
+                idea_author = {iid: author for iid, author in db.execute(
+                    'SELECT idea_id,author FROM tv_discovered_author').fetchall()}
                 tasks = {idea_id: alerts.normalized_url(url) for idea_id, url in historical}
                 tasks.update({idea_id: alerts.normalized_url(url) for idea_id, url in discovered})
                 closed = policy.closed_ids(db)
@@ -82,7 +91,8 @@ def watch_updates():
                         if new:
                             log.info('TV %s: %s new events', idea_id, len(new))
                             alerts.update_alerts(db, idea_id, url, new, known_before,
-                                                 idea_id not in historical_ids and not known_before)
+                                                 idea_id not in historical_ids and not known_before,
+                                                 author_name=idea_author.get(idea_id, alerts.AUTHOR))
                         reason = policy.record_closed(db, idea_id, rows)
                         if reason:
                             log.info('TV idea %s closed by author: %s', idea_id, reason)
