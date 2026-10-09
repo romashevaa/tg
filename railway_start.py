@@ -20,8 +20,15 @@ DATA = Path(os.environ.get('SIGNALBOT_DATA_DIR', '/data'))
 def guard():
     if not DATA.is_dir():
         raise SystemExit(f'Persistent volume {DATA} missing. Mount a Railway Volume.')
-    if os.getenv('TRADING_MODE', 'shadow').lower() != 'shadow':
-        raise SystemExit('Railway test build allows TRADING_MODE=shadow only.')
+    mode = os.getenv('TRADING_MODE', 'shadow').strip().lower()
+    if mode not in ('shadow', 'live'):
+        raise SystemExit('Only shadow/live are supported by this Railway runner.')
+    if mode == 'live':
+        if os.getenv('BINGX_LIVE_ACK', '') != 'I_UNDERSTAND_REAL_ORDERS':
+            raise SystemExit('Live mode requires BINGX_LIVE_ACK=I_UNDERSTAND_REAL_ORDERS')
+        if os.getenv('ALLOW_SINGLE_TP_LIVE', '') != 'I_ACCEPT_SINGLE_TP':
+            raise SystemExit('Current executor does not support 80/20 TP splitting. To use the existing single-TP execution, explicitly set ALLOW_SINGLE_TP_LIVE=I_ACCEPT_SINGLE_TP; otherwise stay in shadow.')
+        log.warning('LIVE ENABLED: Telegram signal pipeline may send REAL BingX orders. TradingView discovery remains ALERT ONLY. Exit uses ONE take-profit target, not 80/20.')
     if not (DATA / 'signalbot.session').exists():
         raise SystemExit('Telegram reader session missing: /data/signalbot.session')
     if not os.getenv('OWNER_ID'):

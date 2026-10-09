@@ -24,7 +24,16 @@ class Executor:
         if not self.is_real(plan.market):
             return "shadow", {"shadow": True, "plan": asdict(plan)}
         if plan.market == "futures":
-            return "executed", await self.exchange.open_futures(plan, margin_type or cfg.risk.margin_type)
+            if self.mode == "live":
+                if plan.stop_loss is None or plan.take_profit is None:
+                    raise ValueError("Live futures entry requires an explicit stop loss and take profit")
+                entry = float(plan.entry_price)
+                sl, tp = float(plan.stop_loss), float(plan.take_profit)
+                if entry <= 0 or not ((sl < entry < tp) if plan.side == "long" else (tp < entry < sl)):
+                    raise ValueError("Live futures SL/TP direction inconsistent with entry")
+            # API acceptance is not an executed fill. The status is pending until reconciled.
+            reply = await self.exchange.open_futures(plan, margin_type or cfg.risk.margin_type)
+            return ("pending" if self.mode == "live" else "executed"), reply
         return "executed", await self.exchange.open_spot(plan, info, cfg.risk.spot_slippage_pct)
 
     async def close(self, plan: OrderPlan, info: MarketInfo | None) -> tuple[str, dict]:
