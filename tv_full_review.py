@@ -23,6 +23,7 @@ class Evidence(BaseModel):
     category: str = Field(description='NEW_CALL, CONDITIONAL, UPDATE_RESULT, ANALYSIS, UNCERTAIN')
     symbol: str = ''
     direction: str = Field(description='LONG, SHORT, UNKNOWN')
+    timeframe: str | None = Field(default=None, description='Explicit idea timeframe (1m, 5m, 15m, 1h, 4h, 1d, 1w); null if unclear')
     entry: float | None = None
     stop_loss: float | None = None
     targets: list[float] = Field(default_factory=list)
@@ -35,7 +36,7 @@ class Evidence(BaseModel):
     details: str = ''
 
 
-PROMPT = """Review one public TradingView idea at its ORIGINAL publication time. Read the full text and provided chart image (if available). Extract only explicitly written or legibly labelled numbers: entry, stop, take-profits, leverage and margin mode. Do NOT estimate levels using candle locations, chart grid, unlabelled position tool zones, axis ticks, or current market price. If unreadable, return null and explain. Distinguish an actionable new call from an analysis, a conditional setup and a historical result. Never turn BUY SETUP alone into an instruction to trade now. If chart image is unavailable or mismatches title/symbol, state uncertainty. Do not decide to trade, do not infer order fills. Return structured JSON only."""
+PROMPT = """Review one public TradingView idea at its ORIGINAL publication time. Read the full text and provided chart image (if available). Extract only explicitly written or legibly labelled numbers: entry, stop, take-profits, leverage, margin mode, and the explicitly stated chart/idea timeframe (null if unknown). Do NOT estimate levels using candle locations, chart grid, unlabelled position tool zones, axis ticks, or current market price. If unreadable, return null and explain. Distinguish an actionable new call from an analysis, a conditional setup and a historical result. Never turn BUY SETUP alone into an instruction to trade now. If chart image is unavailable or mismatches title/symbol, state uncertainty. Do not decide to trade, do not infer order fills. Return structured JSON only."""
 
 
 def init(db):
@@ -56,6 +57,7 @@ def format_result(author, iid, url, evidence, has_chart, published=None, decisio
              'Плече: ' + escape(str(evidence.leverage)) if evidence.leverage else 'Плече: —',
              'Маржа: ' + escape(evidence.margin_type or '—'),
              'Графік: ' + ('отримано' if has_chart else 'недоступний'),
+             'Таймфрейм: ' + escape(evidence.timeframe or 'невідомий'),
              'Опубліковано: ' + escape(age_label(published)),
              escape(evidence.details[:450]),
              '<a href="' + escape(url,quote=True) + '">Відкрити ідею</a>',

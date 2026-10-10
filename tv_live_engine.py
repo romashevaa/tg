@@ -16,6 +16,7 @@ from signalbot.bingx import BingX
 from signalbot.models import ParsedSignal
 from signalbot.risk import build_plan, PlanError
 from tv_trade_diagnostics import bingx_pair, evaluate, targets_80_20
+from tv_timeframe_policy import freshness, untouched_since_publication
 
 
 def schema(db):
@@ -70,8 +71,9 @@ async def execute(db, iid, author, ev, published, cfg):
     tv_watch_policy.initialize(db)
     if db.execute('SELECT 1 FROM tv_closed_ideas WHERE idea_id=?', (iid,)).fetchone():
         return 'SKIP', 'Автор уже закрив цей сигнал'
-    if not fresh(published, cfg.validator.max_age_minutes):
-        return 'SKIP', 'Ідея старша за допустимий час, автоматичний вхід заборонено'
+    allowed, age_reason = freshness(published, getattr(ev, 'timeframe', None), unknown_minutes=cfg.validator.max_age_minutes)
+    if not allowed:
+        return 'SKIP', age_reason
     pair = bingx_pair(ev.symbol)
     if not pair:
         return 'SKIP', 'Немає відповідного USDT-ф’ючерсу BingX'
@@ -87,6 +89,12 @@ async def execute(db, iid, author, ev, published, cfg):
         if not info: return 'SKIP', 'Ф’ючерсний контракт BingX недоступний'
         verdict, reason = evaluate(ev, info.price, True)
         if verdict != 'READY_FOR_EXECUTION_CHECK': return verdict, reason
+        if (datetime.now(timezone.utc) - published).total_seconds() > cfg.validator.max_age_minutes * 60:
+            try:
+                replay_ok, replay_reason = await untouched_since_publication(exchange, pair, ev, published)
+            except Exception as exc:
+                return 'SKIP', f'Не вдалося перевірити історичні свічки BingX: {type(exc).__name__}'
+            if not replay_ok: return 'SKIP', replay_reason
         if not await exchange.hedge_mode(): return 'SKIP', 'Потрібен Hedge Mode на BingX'
         if await exchange.futures_positions(pair): return 'SKIP', 'Уже є позиція на цьому символі; не змішуємо з угодою бота'
         if await exchange.futures_open_orders(pair): return 'SKIP', 'Уже є активні ордери на цьому символі'
