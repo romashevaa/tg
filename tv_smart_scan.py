@@ -11,6 +11,8 @@ import tv_auto_alerts as alerts
 import tv_last_hour
 import tv_author_settings as authors_db
 from tv_full_review import Evidence
+from tv_timeframe_policy import normalize_timeframe
+from tv_timeframe_recovery import recover
 from tv_smart_entry import inspect
 from signalbot.bingx import BingX
 
@@ -45,9 +47,10 @@ async def scan(hours=16, data_dir='/data', *, attempt_live=False):
                     and os.getenv('TV_SMART_ENTRY_LIVE_GATE') == 'YES'
                     and os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES')
     cfg = None
-    if live_allowed:
-        from signalbot.config import load_config
-        cfg = load_config('config.toml')
+    from signalbot.config import load_config
+    # Config is also needed to recover a timeframe for previously cached AI reviews.
+    # Loading it does not submit any orders.
+    cfg = load_config('config.toml')
     exchange = BingX('', '')
     try:
         with sqlite3.connect(str(data_dir / 'tv_updates_monitor.sqlite'), timeout=20) as db:
@@ -79,6 +82,12 @@ async def scan(hours=16, data_dir='/data', *, attempt_live=False):
                         decision = Decision('INVALID', 'Автор закрив ідею')
                     else:
                         evidence = Evidence.model_validate(json.loads(row[0]))
+                        if not normalize_timeframe(evidence.timeframe):
+                            try:
+                                evidence, source = await recover(db, iid, item, unpacked[1], evidence, cfg)
+                            except Exception as exc:
+                                source = f'recovery_error_{type(exc).__name__}'
+                            print(f'SMART_TF_RECOVERY @{author} {iid}: TF={evidence.timeframe or "unknown"} source={source}')
                         try:
                             decision = await inspect(exchange, evidence)
                         except Exception as exc:

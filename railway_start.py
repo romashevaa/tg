@@ -153,8 +153,10 @@ def watch_smart_entry():
     while True:
         started = time.monotonic()
         try:
+            log.info('TV Smart Entry cycle started, auto_live_requested=%s', os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES')
             asyncio.run(scan(hours=float(os.getenv('TV_SMART_ENTRY_LOOKBACK_HOURS', '16')), data_dir=str(DATA),
                              attempt_live=(os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES')))
+            log.info('TV Smart Entry cycle finished')
         except Exception as exc:
             log.warning('TV Smart Entry failed (%s): %s', type(exc).__name__, str(exc)[:180])
         time.sleep(max(1, interval - (time.monotonic() - started)))
