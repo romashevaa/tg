@@ -272,22 +272,22 @@ class BingX:
 
     # futures trading
 
-    async def open_futures(self, plan: OrderPlan, margin_type: str) -> dict:
+    async def open_futures(self, plan: OrderPlan, margin_type: str, configure: bool = True) -> dict:
         long = plan.side == "long"
         hedge = await self.hedge_mode()
         position_side = ("LONG" if long else "SHORT") if hedge else "BOTH"
 
         if margin_type not in ("ISOLATED", "CROSSED"):
             raise ValueError("Invalid margin mode")
-        # Fail closed on a rejected switch; never silently trade using an unverified mode.
-        await self._request(
-            "POST", "/openApi/swap/v2/trade/marginType", {"symbol": plan.symbol, "marginType": margin_type}
-        )
-        await self._request(
-            "POST",
-            "/openApi/swap/v2/trade/leverage",
-            {"symbol": plan.symbol, "side": position_side, "leverage": plan.leverage},
-        )
+        # Configure once BEFORE the first entry. Subsequent split leg reuses settings.
+        if configure:
+            await self._request(
+                "POST", "/openApi/swap/v2/trade/marginType", {"symbol": plan.symbol, "marginType": margin_type}
+            )
+            await self._request(
+                "POST", "/openApi/swap/v2/trade/leverage",
+                {"symbol": plan.symbol, "side": position_side, "leverage": plan.leverage},
+            )
 
         params: dict = {
             "symbol": plan.symbol,

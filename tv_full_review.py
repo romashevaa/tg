@@ -1,4 +1,4 @@
-"""Opt-in multi-modal TradingView review. Never submits orders. Uses Gemini ONLY once per idea unless --force."""
+"""TradingView Gemini review; LIVE is an independent, explicitly gated opt-in."""
 import asyncio
 import argparse
 import json
@@ -16,6 +16,7 @@ import tv_last_hour
 import tv_author_settings as settings
 import tv_auto_alerts as alerts
 from tv_trade_diagnostics import age_label, evaluate, bingx_pair, targets_80_20
+from tv_live_engine import execute as execute_live
 
 
 class Evidence(BaseModel):
@@ -131,6 +132,13 @@ async def run(hours=1, max_ideas=6, notify=False, force=False, data_dir='/data',
                         except Exception as check_err:
                             print(f'@{author} {iid}: BINGX_READ_FAILED {type(check_err).__name__}: {str(check_err)[:100]}')
                     decision = evaluate(ev, live_price, listed)
+                    # Auto execution is separately opt-in. Never replay cached or stale ideas.
+                    if cfg.trading_mode == 'live' and os.getenv('TV_LIVE_EXECUTION') == 'YES':
+                        try:
+                            trade_status, trade_reason = await execute_live(eventdb, iid, author, ev, tv_last_hour.published_at(entry), cfg)
+                            decision = (trade_status, trade_reason)
+                        except Exception as trade_error:
+                            decision = ('EXECUTION_ERROR', f'{type(trade_error).__name__}: {str(trade_error)[:160]}')
                     tp_split = targets_80_20(ev)
                     print(f'@{author} {iid}: {ev.category}/{ev.confidence} '
                           f'age={age_label(tv_last_hour.published_at(entry))} '

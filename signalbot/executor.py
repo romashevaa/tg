@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import os
 
 from .bingx import BingX
 from .config import Config
@@ -16,7 +17,9 @@ class Executor:
 
     def is_real(self, market: str) -> bool:
         if self.mode == "live":
-            return True
+            # Independent opt-in: enabling TradingView LIVE must not enable
+            # the older single-TP Telegram pipeline by accident.
+            return os.getenv("TG_LIVE_EXECUTION") == "YES"
         # BingX simulated trading (VST) exists for futures only.
         return self.mode == "demo" and market == "futures"
 
