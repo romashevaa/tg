@@ -32,12 +32,22 @@ def save(db, iid, author, decision):
     db.commit()
 
 
-async def scan(hours=16, data_dir='/data'):
+async def scan(hours=16, data_dir='/data', *, attempt_live=False):
     data_dir = Path(data_dir)
     with sqlite3.connect(str(data_dir / 'signalbot.db'), timeout=20) as db:
         enabled = authors_db.enabled_authors(db)
     now = datetime.now(timezone.utc)
     checked = 0
+    attempts = 0
+    # Real-order retries are opt-in separately from the read-only Smart Entry worker.
+    live_allowed = (attempt_live and os.getenv('TRADING_MODE') == 'live'
+                    and os.getenv('TV_LIVE_EXECUTION') == 'YES'
+                    and os.getenv('TV_SMART_ENTRY_LIVE_GATE') == 'YES'
+                    and os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES')
+    cfg = None
+    if live_allowed:
+        from signalbot.config import load_config
+        cfg = load_config('config.toml')
     exchange = BingX('', '')
     try:
         with sqlite3.connect(str(data_dir / 'tv_updates_monitor.sqlite'), timeout=20) as db:
@@ -75,17 +85,28 @@ async def scan(hours=16, data_dir='/data'):
                             from tv_smart_entry import Decision
                             decision = Decision('CHECK', f'Не вдалося перевірити ринок: {type(exc).__name__}')
                     save(db, iid, author, decision)
+                    # ONLY a fresh READY_REVIEW may trigger execution. The executor
+                    # re-fetches candles and performs full market/risk checks.
+                    if live_allowed and decision.status == 'READY_REVIEW':
+                        from tv_live_engine import execute
+                        try:
+                            status, reason = await execute(db, iid, author, evidence, published, cfg)
+                            attempts += 1
+                            print(f'SMART_AUTO @{author} {iid}: {status}: {reason}')
+                        except Exception as exc:
+                            print(f'SMART_AUTO @{author} {iid}: ERROR {type(exc).__name__}: {str(exc)[:160]}')
                     checked += 1
                     print(f'@{author} {iid}: age={age:.1f}h {decision.status}: {decision.reason}; '
                           f'BingX={decision.price if decision.price is not None else "—"} TF={decision.interval or "—"}')
     finally:
         await exchange.close()
-    print(f'Smart Entry: checked={checked} (read-only; no orders)')
+    print(f'Smart Entry: checked={checked} attempts={attempts} mode={"LIVE_OPT_IN" if live_allowed else "READ_ONLY"}')
 
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--hours', type=float, default=16)
     p.add_argument('--data-dir', default=os.getenv('SIGNALBOT_DATA_DIR', '/data'))
+    p.add_argument('--execute-live', action='store_true', help='Explicit live attempt; also requires TV_SMART_AUTO_EXECUTION=YES and LIVE guards')
     args = p.parse_args()
-    asyncio.run(scan(args.hours, args.data_dir))
+    asyncio.run(scan(args.hours, args.data_dir, attempt_live=args.execute_live))

@@ -129,8 +129,19 @@ async def execute(db, iid, author, ev, published, cfg):
         legs = [replace(plan, quantity=q1, take_profit=tp1, client_id=cid+'a'),
                 replace(plan, quantity=q2, take_profit=tp2, client_id=cid+'b')]
         # PRE-SEND durable barrier. Even timeout/ambiguous response must never auto-retry.
-        record(db,iid,author,'SUBMITTING','Підготовлено два ордери; потрібна звірка BingX',
-               {'symbol':pair,'legs':[asdict(p) for p in legs]})
+        # Atomic claim across the review and smart-monitor workers. Both workers
+        # may see READY simultaneously; only one is allowed to contact BingX.
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {'symbol':pair,'legs':[asdict(p) for p in legs]}
+        cursor = db.execute('''INSERT OR IGNORE INTO tv_live_orders
+            (idea_id,author,created_utc,updated_utc,status,reason,payload)
+            VALUES (?,?,?,?,?,?,?)''',
+            (iid,author,now,now,'SUBMITTING',
+             'Підготовлено два ордери; потрібна звірка BingX',
+             json.dumps(payload, ensure_ascii=False, default=str)))
+        db.commit()
+        if cursor.rowcount != 1:
+            return 'SKIP', 'Ідею вже зарезервував інший LIVE-воркер; повторний ордер заборонено'
         results=[]
         for index, leg in enumerate(legs):
             try:

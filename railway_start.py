@@ -144,15 +144,17 @@ def watch_full_reviews():
 
 
 def watch_smart_entry():
-    """Optional read-only scenario monitor, independent of live execution."""
+    """Smart Entry scenario monitor; LIVE attempts require explicit separate opt-in."""
     import asyncio
     from tv_smart_scan import scan
     interval = max(60, int(os.getenv('TV_SMART_ENTRY_SECONDS', '300')))
-    log.info('TV Smart Entry read-only watcher started, interval=%ss', interval)
+    active = os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES'
+    log.info('TV Smart Entry watcher started, interval=%ss, auto_live_requested=%s', interval, active)
     while True:
         started = time.monotonic()
         try:
-            asyncio.run(scan(hours=float(os.getenv('TV_SMART_ENTRY_LOOKBACK_HOURS', '16')), data_dir=str(DATA)))
+            asyncio.run(scan(hours=float(os.getenv('TV_SMART_ENTRY_LOOKBACK_HOURS', '16')), data_dir=str(DATA),
+                             attempt_live=(os.getenv('TV_SMART_AUTO_EXECUTION') == 'YES')))
         except Exception as exc:
             log.warning('TV Smart Entry failed (%s): %s', type(exc).__name__, str(exc)[:180])
         time.sleep(max(1, interval - (time.monotonic() - started)))
