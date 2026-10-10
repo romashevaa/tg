@@ -14,6 +14,7 @@ from pathlib import Path
 from signalbot.config import load_config
 from tv_full_review import Evidence, run
 from tv_live_engine import execute
+from tv_timeframe_recovery import recover
 import tv_author_settings as author_settings
 import tv_auto_alerts as alerts
 import tv_last_hour
@@ -57,6 +58,9 @@ async def main(hours, max_ideas, notify, data_dir):
                     continue
                 try:
                     evidence = Evidence.model_validate(json.loads(cached[0]))
+                    if not evidence.timeframe:
+                        evidence, tf_source = await recover(db, iid, entry, record[1], evidence, cfg)
+                        print(f'CACHED @{author} {iid}: TF_RECOVERY={evidence.timeframe or "unknown"} source={tf_source}')
                     status, reason = await execute(db, iid, author, evidence, published, cfg)
                     print(f'CACHED @{author} {iid}: age_minutes={age/60:.1f} {status}: {reason}')
                 except Exception as err:
