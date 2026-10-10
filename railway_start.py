@@ -142,6 +142,22 @@ def watch_full_reviews():
         time.sleep(max(1, interval - (time.monotonic() - started)))
 
 
+
+def watch_smart_entry():
+    """Optional read-only scenario monitor, independent of live execution."""
+    import asyncio
+    from tv_smart_scan import scan
+    interval = max(60, int(os.getenv('TV_SMART_ENTRY_SECONDS', '300')))
+    log.info('TV Smart Entry read-only watcher started, interval=%ss', interval)
+    while True:
+        started = time.monotonic()
+        try:
+            asyncio.run(scan(hours=float(os.getenv('TV_SMART_ENTRY_LOOKBACK_HOURS', '16')), data_dir=str(DATA)))
+        except Exception as exc:
+            log.warning('TV Smart Entry failed (%s): %s', type(exc).__name__, str(exc)[:180])
+        time.sleep(max(1, interval - (time.monotonic() - started)))
+
+
 def main():
     guard()
     from signalbot.cli import main as bot_main
@@ -149,6 +165,8 @@ def main():
     threading.Thread(target=watch_updates, daemon=True, name='tv-updates').start()
     if os.getenv('TV_FULL_REVIEW_ENABLED', '0') == '1':
         threading.Thread(target=watch_full_reviews, daemon=True, name='tv-full-review').start()
+    if os.getenv('TV_SMART_ENTRY_ENABLED', '0') == '1':
+        threading.Thread(target=watch_smart_entry, daemon=True, name='tv-smart-entry').start()
     sys.argv = ['signalbot', '--config', 'config.toml', 'run']
     bot_main()
 
