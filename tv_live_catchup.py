@@ -15,9 +15,31 @@ from signalbot.config import load_config
 from tv_full_review import Evidence, run
 from tv_live_engine import execute
 from tv_timeframe_recovery import recover
+from tv_trade_diagnostics import bingx_pair
 import tv_author_settings as author_settings
 import tv_auto_alerts as alerts
 import tv_last_hour
+
+
+async def contract_diagnostic(evidence, exchange=None):
+    """Read-only contract status for a rejected/cached signal. Never sends orders."""
+    pair = bingx_pair(evidence.symbol)
+    if not pair:
+        return f'symbol={evidence.symbol or "unknown"} pair=NONE contract=UNSUPPORTED_NON_USDT'
+    owned = exchange is None
+    if owned:
+        from signalbot.bingx import BingX
+        exchange = BingX('', '')
+    try:
+        info = await exchange.market_info(pair, 'futures')
+        if info is None:
+            return f'symbol={evidence.symbol} pair={pair} contract=NOT_LISTED'
+        return f'symbol={evidence.symbol} pair={pair} contract=LISTED price={info.price}'
+    except Exception as exc:
+        return f'symbol={evidence.symbol} pair={pair} contract=UNVERIFIED ({type(exc).__name__})'
+    finally:
+        if owned:
+            await exchange.close()
 
 
 def author_author_suspended(db, author):
@@ -62,7 +84,8 @@ async def main(hours, max_ideas, notify, data_dir):
                         evidence, tf_source = await recover(db, iid, entry, record[1], evidence, cfg)
                         print(f'CACHED @{author} {iid}: TF_RECOVERY={evidence.timeframe or "unknown"} source={tf_source}')
                     status, reason = await execute(db, iid, author, evidence, published, cfg)
-                    print(f'CACHED @{author} {iid}: age_minutes={age/60:.1f} {status}: {reason}')
+                    market = await contract_diagnostic(evidence) if status in ('SKIP', 'CHECK') else f'symbol={evidence.symbol} pair={bingx_pair(evidence.symbol) or "NONE"}'
+                    print(f'CACHED @{author} {iid}: age_minutes={age/60:.1f} {status}: {reason} | {market}')
                 except Exception as err:
                     print(f'CACHED @{author} {iid}: ERROR {type(err).__name__}: {err}')
                 existing.add(iid)
