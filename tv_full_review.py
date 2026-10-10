@@ -15,6 +15,7 @@ from signalbot.tradingview import TradingView
 import tv_last_hour
 import tv_author_settings as settings
 import tv_auto_alerts as alerts
+from tv_trade_diagnostics import age_label, evaluate, bingx_pair, targets_80_20
 
 
 class Evidence(BaseModel):
@@ -43,7 +44,7 @@ def init(db):
     db.commit()
 
 
-def format_result(author, iid, url, evidence, has_chart):
+def format_result(author, iid, url, evidence, has_chart, published=None, decision=None, live_price=None):
     status = evidence.category + ' / ' + evidence.confidence
     lines = ['🧠 <b>Аналіз TradingView</b> @' + escape(author),
              '<b>' + escape(evidence.symbol or iid) + '</b> — ' + escape(status),
@@ -54,9 +55,11 @@ def format_result(author, iid, url, evidence, has_chart):
              'Плече: ' + escape(str(evidence.leverage)) if evidence.leverage else 'Плече: —',
              'Маржа: ' + escape(evidence.margin_type or '—'),
              'Графік: ' + ('отримано' if has_chart else 'недоступний'),
+             'Опубліковано: ' + escape(age_label(published)),
              escape(evidence.details[:450]),
              '<a href="' + escape(url,quote=True) + '">Відкрити ідею</a>',
-             '⚠️ Це аналіз умов, НЕ торговий ордер.']
+             '⚠️ Угоду не відкрито: ' + escape((decision or ('CHECK', 'AI-аналіз не підключено до BingX-виконавця'))[1]),
+             'Статус: ' + escape((decision or ('CHECK', ''))[0]) + (' | BingX ' + escape(str(live_price)) if live_price is not None else '')] 
     return '\n'.join(lines)
 
 
@@ -111,9 +114,31 @@ async def run(hours=1, max_ideas=6, notify=False, force=False, data_dir='/data',
                     with eventdb:
                         eventdb.execute('INSERT OR REPLACE INTO tv_full_chart_reviews VALUES (?,?,?,?,?)',
                             (iid,author,datetime.now(timezone.utc).isoformat(),ev.model_dump_json(),int(bool(img))))
-                    print(f'@{author} {iid}: {ev.category}/{ev.confidence} entry={ev.entry} sl={ev.stop_loss} tp={ev.targets} chart={bool(img)}')
+                    # Read-only exchange status. No API keys and no trading requests.
+                    pair = bingx_pair(ev.symbol)
+                    listed = None
+                    live_price = None
+                    if pair and ev.category.upper() in ('NEW_CALL', 'CONDITIONAL') and ev.entry is not None:
+                        try:
+                            from signalbot.bingx import BingX
+                            exchange = BingX('', '')
+                            try:
+                                info = await exchange.market_info(pair, 'futures')
+                                listed = info is not None
+                                live_price = info.price if info else None
+                            finally:
+                                await exchange.close()
+                        except Exception as check_err:
+                            print(f'@{author} {iid}: BINGX_READ_FAILED {type(check_err).__name__}: {str(check_err)[:100]}')
+                    decision = evaluate(ev, live_price, listed)
+                    tp_split = targets_80_20(ev)
+                    print(f'@{author} {iid}: {ev.category}/{ev.confidence} '
+                          f'age={age_label(tv_last_hour.published_at(entry))} '
+                          f'entry={ev.entry} sl={ev.stop_loss} tp={ev.targets} '
+                          f'chart={bool(img)} bingx={live_price} status={decision[0]} reason={decision[1]}'
+                          + (f' TP80/20_PROPOSED={tp_split}' if tp_split else ''))
                     if notify:
-                        alerts.enqueue(eventdb,'fullreview:'+iid,format_result(author,iid,url,ev,bool(img)))
+                        alerts.enqueue(eventdb,'fullreview:'+iid,format_result(author,iid,url,ev,bool(img),tv_last_hour.published_at(entry),decision,live_price))
                 except Exception as exc:
                     print(f'@{author} {iid}: REVIEW_FAILED ({type(exc).__name__}: {str(exc)[:160]})')
         finally:
