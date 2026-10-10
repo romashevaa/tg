@@ -22,8 +22,9 @@ class FlowTests(unittest.TestCase):
             open_futures=AsyncMock(return_value={'orderId':'123'}),
             futures_order=AsyncMock(return_value={'status':'NEW'}), close=AsyncMock())
         db=sqlite3.connect(':memory:')
-        with patch.dict(os.environ,{'TRADING_MODE':'live','TV_LIVE_EXECUTION':'YES','TV_LIVE_ACK':'I_ACCEPT_TWO_REAL_ORDERS','BINGX_API_KEY':'test','BINGX_SECRET_KEY':'test'}), \
-             patch('tv_live_engine.BingX',return_value=x):
+        with patch.dict(os.environ,{'TRADING_MODE':'live','TV_LIVE_EXECUTION':'YES','TV_LIVE_ACK':'I_ACCEPT_TWO_REAL_ORDERS','TV_SMART_ENTRY_LIVE_GATE':'YES','BINGX_API_KEY':'test','BINGX_SECRET_KEY':'test'}), \
+             patch('tv_live_engine.BingX',return_value=x), \
+             patch('tv_smart_entry.inspect', new=AsyncMock(return_value=SimpleNamespace(status='READY_REVIEW', reason='confirmed'))):
             cfg=load_config('config.toml')
             result=asyncio.run(execute(db,'WLDTEST','author',ev,datetime.now(timezone.utc),cfg))
             self.assertEqual(result[0],'PENDING_VERIFY')

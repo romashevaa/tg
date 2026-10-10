@@ -81,10 +81,23 @@ async def execute(db, iid, author, ev, published, cfg):
         return 'SHADOW', 'Торгівля TradingView не увімкнена (TRADING_MODE=live, TV_LIVE_EXECUTION=YES)'
     if os.getenv('TV_LIVE_ACK') != 'I_ACCEPT_TWO_REAL_ORDERS':
         return 'SHADOW', 'Немає підтвердження двох реальних ордерів TV_LIVE_ACK'
+    # Fail closed: the legacy executor must never bypass Smart Entry after this upgrade.
+    # Explicit activation is needed even when the existing LIVE environment is enabled.
+    if os.getenv('TV_SMART_ENTRY_LIVE_GATE') != 'YES':
+        return 'CHECK', 'Smart Entry LIVE gate не активовано (TV_SMART_ENTRY_LIVE_GATE=YES); ордер не надсилається'
     if not cfg.secrets.bingx_api_key or not cfg.secrets.bingx_secret_key:
         return 'SKIP', 'Немає BingX API ключів'
     exchange = BingX(cfg.secrets.bingx_api_key, cfg.secrets.bingx_secret_key)
     try:
+        # Inspect live, closed BingX candles at the moment of the intended entry.
+        # Never trust an old cached READY_REVIEW verdict from the background scanner.
+        from tv_smart_entry import inspect
+        try:
+            smart = await inspect(exchange, ev)
+        except Exception as exc:
+            return 'CHECK', f'Smart Entry не перевірено: {type(exc).__name__}; ордер не надсилається'
+        if smart.status != 'READY_REVIEW':
+            return smart.status, f'Smart Entry: {smart.reason}; ордер не надсилається'
         info = await exchange.market_info(pair, 'futures')
         if not info: return 'SKIP', 'Ф’ючерсний контракт BingX недоступний'
         verdict, reason = evaluate(ev, info.price, True)
