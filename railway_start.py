@@ -52,6 +52,8 @@ def watch_discovery():
                     authors = author_settings.enabled_authors(author_db)
                 for author_name in authors:
                     try:
+                        if not author_settings.check_author(db, author_name):
+                            continue
                         alerts.discover(db, historical_ids, author_name=author_name)
                     except Exception as exc:
                         log.warning('TV discovery [%s] failed (%s): %s', author_name, type(exc).__name__, exc)
@@ -75,17 +77,23 @@ def watch_updates():
             started = time.monotonic()
             failures = 0
             try:
-                with sqlite3.connect(f'file:{DATA / "signalbot.db"}?mode=ro', uri=True, timeout=15) as source:
-                    historical = source.execute('SELECT idea_id,url FROM tv_ideas').fetchall()
-                historical_ids = {idea_id for idea_id, _ in historical}
+                with sqlite3.connect(str(DATA / 'signalbot.db'), timeout=15) as source:
+                    enabled = {name.lower() for name in author_settings.enabled_authors(source)}
+                    historical = source.execute('SELECT idea_id,url,handle FROM tv_ideas').fetchall()
+                # Never poll historical ideas from disabled/suspended authors.
+                suspended = {name.lower() for name in enabled if author_settings.suspension_info(db, name)}
+                eligible = enabled - suspended
+                historical_ids = {idea_id for idea_id, _, _ in historical}
                 discovered = alerts.all_discovered(db)
                 idea_author = {iid: author for iid, author in db.execute(
                     'SELECT idea_id,author FROM tv_discovered_author').fetchall()}
-                tasks = {idea_id: alerts.normalized_url(url) for idea_id, url in historical}
-                tasks.update({idea_id: alerts.normalized_url(url) for idea_id, url in discovered})
+                tasks = {iid: alerts.normalized_url(url) for iid, url, author in historical
+                         if author.lower() in eligible}
+                tasks.update({iid: alerts.normalized_url(url) for iid, url in discovered
+                              if idea_author.get(iid, '').lower() in eligible})
                 closed = policy.closed_ids(db)
-                log.info('TV updates starting, historical=%s discovered=%s skipped_closed=%s scanning=%s',
-                         len(historical), len(discovered), len(closed & tasks.keys()), len(tasks.keys() - closed))
+                log.info('TV updates starting, historical=%s discovered=%s skipped_closed=%s scanning=%s suspended=%s',
+                         len(historical), len(discovered), len(closed & tasks.keys()), len(tasks.keys() - closed), sorted(suspended))
                 for idea_id, url in tasks.items():
                     if idea_id in closed:
                         continue
@@ -121,7 +129,7 @@ def watch_full_reviews():
     import asyncio
     from tv_full_review import run
     interval = max(60, int(os.getenv('TV_FULL_REVIEW_SECONDS', '60')))
-    max_ideas = max(1, min(10, int(os.getenv('TV_FULL_REVIEW_PER_CYCLE', '2'))))
+    max_ideas = max(1, int(os.getenv('TV_FULL_REVIEW_PER_CYCLE', '1000')))
     log.info('TV full chart review started, interval=%ss, max_per_cycle=%s', interval, max_ideas)
     while True:
         started = time.monotonic()

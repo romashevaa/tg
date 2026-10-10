@@ -61,8 +61,8 @@ def format_result(author, iid, url, evidence, has_chart):
 
 
 async def run(hours=1, max_ideas=6, notify=False, force=False, data_dir='/data', send_now=True):
-    if not 1 <= max_ideas <= 30:
-        raise ValueError('max-ideas must be between 1 and 30')
+    if max_ideas < 1:
+        raise ValueError('max-ideas must be positive')
     cfg = load_config('config.toml')
     if cfg.ai.provider != 'gemini' or not cfg.secrets.gemini_api_key:
         raise RuntimeError('GEMINI_API_KEY is required; no review performed')
@@ -75,6 +75,8 @@ async def run(hours=1, max_ideas=6, notify=False, force=False, data_dir='/data',
     cutoff=datetime.now(timezone.utc).timestamp()-hours*3600
     try:
         for author in authors:
+            if settings.suspension_info(eventdb, author):
+                continue
             try:
                 entries=alerts.fetch_latest(author_name=author)
                 for entry in entries:
