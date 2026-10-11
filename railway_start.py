@@ -26,8 +26,12 @@ def guard():
     if mode == 'live':
         if os.getenv('BINGX_LIVE_ACK', '') != 'I_UNDERSTAND_REAL_ORDERS':
             raise SystemExit('Live mode requires BINGX_LIVE_ACK=I_UNDERSTAND_REAL_ORDERS')
-        if os.getenv('TV_LIVE_EXECUTION') == 'YES' and os.getenv('TV_LIVE_ACK') != 'I_ACCEPT_TWO_REAL_ORDERS':
-            raise SystemExit('TV LIVE requires TV_LIVE_ACK=I_ACCEPT_TWO_REAL_ORDERS')
+        if os.getenv('TV_LIVE_EXECUTION') == 'YES':
+            if os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
+                if os.getenv('TV_ONE_ENTRY_LIVE_ACK') != 'I_ACCEPT_ONE_ENTRY_AND_TWO_TPS':
+                    raise SystemExit('One Entry LIVE requires TV_ONE_ENTRY_LIVE_ACK')
+            else:
+                log.warning('TV LIVE executor is unselected; entry requests will return CHECK, never fall back to two-entry LIVE')
         log.warning('LIVE ENABLED: real BingX orders are possible; TradingView requires separate TV_LIVE_EXECUTION=YES.')
     if not (DATA / 'signalbot.session').exists():
         raise SystemExit('Telegram reader session missing: /data/signalbot.session')

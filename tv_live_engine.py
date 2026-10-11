@@ -1,4 +1,4 @@
-"""Opt-in TradingView -> BingX execution. Two independently protected Hedge entry orders.
+"""TradingView -> BingX single-entry execution router.
 
 Exchange acknowledgement is NOT a fill; every attempt is persisted before sending.
 Never re-submit an uncertain request: operator reconciliation is required.
@@ -83,11 +83,13 @@ async def execute(db, iid, author, ev, published, cfg):
         return 'SKIP', 'Немає відповідного USDT-ф’ючерсу BingX'
     if cfg.trading_mode != 'live' or os.getenv('TV_LIVE_EXECUTION') != 'YES':
         return 'SHADOW', 'Торгівля TradingView не увімкнена (TRADING_MODE=live, TV_LIVE_EXECUTION=YES)'
-    if os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
-        if os.getenv('TV_ONE_ENTRY_LIVE_ACK') != 'I_ACCEPT_ONE_ENTRY_AND_TWO_TPS':
-            return 'SHADOW', 'One Entry LIVE потребує TV_ONE_ENTRY_LIVE_ACK'
-    elif os.getenv('TV_LIVE_ACK') != 'I_ACCEPT_TWO_REAL_ORDERS':
-        return 'SHADOW', 'Немає підтвердження двох реальних ордерів TV_LIVE_ACK'
+    # One execution strategy only. Never silently fall back to legacy two-order entry.
+    # Keep an explicit production acknowledgement: deployment does not authorize
+    # switching the execution strategy or bypassing exchange protection checks.
+    if os.getenv('TV_ONE_ENTRY_LIVE') != 'YES':
+        return 'CHECK', 'ONE_ENTRY_NOT_ENABLED: потрібен TV_ONE_ENTRY_LIVE=YES; старий 80/20 executor вимкнений'
+    if os.getenv('TV_ONE_ENTRY_LIVE_ACK') != 'I_ACCEPT_ONE_ENTRY_AND_TWO_TPS':
+        return 'CHECK', 'ONE_ENTRY_ACK_MISSING: потрібне підтвердження LIVE-механізму'
     # Fail closed: the legacy executor must never bypass Smart Entry after this upgrade.
     # Explicit activation is needed even when the existing LIVE environment is enabled.
     if os.getenv('TV_SMART_ENTRY_LIVE_GATE') != 'YES':
@@ -131,68 +133,10 @@ async def execute(db, iid, author, ev, published, cfg):
         if not ((plan.stop_loss < plan.entry_price < tp1 < tp2) if plan.side=='long' else
                 (plan.stop_loss > plan.entry_price > tp1 > tp2)):
             return 'SKIP', 'TP1/TP2 або SL некоректні після округлення'
-        # Experimental one-entry strategy is preview-only: a single exchange
-        # acknowledgement cannot certify attached SL or linked partial TP exits.
-        # In this mode deliberately NEVER send an entry order.
-        if os.getenv('TV_SINGLE_ENTRY_PREVIEW') == 'YES' and os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
-            return 'CHECK', ('Конфлікт режимів: одночасно увімкнені TV_SINGLE_ENTRY_PREVIEW '
-                             'і TV_ONE_ENTRY_LIVE. Заявка не відправляється.')
         if os.getenv('TV_SINGLE_ENTRY_PREVIEW') == 'YES':
-            from signalbot.one_entry import preview
-            report = preview(plan, info, tp1, tp2)
-            return 'CHECK', ('SINGLE_ENTRY_PREVIEW (NO ORDERS): '+
-                             json.dumps(report.asdict(), ensure_ascii=False))
-        if os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
-            # Separate experimental strategy. Does not override the existing
-            # LIVE executor unless operator explicitly selects it.
-            from signalbot.one_entry_live import run as run_single_entry
-            return await run_single_entry(db,iid,author,exchange,plan,info,tp1,tp2,
-                sig.margin_type or cfg.risk.margin_type)
-        try:
-            q1, q2 = split_quantity(plan.quantity, info.qty_precision, info.min_qty)
-        except ValueError as exc:
-            return 'SKIP', f'Перевірка обсягу 80/20: {exc}; ризик не збільшуємо'
-        if min(q1, q2) * plan.entry_price < info.min_notional:
-            return 'SKIP', 'Частина 20% не досягає мінімального номіналу біржі'
-        if await exchange.open_positions() >= cfg.risk.max_open_positions:
-            return 'SKIP', 'Досягнута межа активних позицій з конфігурації'
-        legs = [replace(plan, quantity=q1, take_profit=tp1, client_id=cid+'a'),
-                replace(plan, quantity=q2, take_profit=tp2, client_id=cid+'b')]
-        # PRE-SEND durable barrier. Even timeout/ambiguous response must never auto-retry.
-        # Atomic claim across the review and smart-monitor workers. Both workers
-        # may see READY simultaneously; only one is allowed to contact BingX.
-        now = datetime.now(timezone.utc).isoformat()
-        payload = {'symbol':pair,'legs':[asdict(p) for p in legs]}
-        cursor = db.execute('''INSERT OR IGNORE INTO tv_live_orders
-            (idea_id,author,created_utc,updated_utc,status,reason,payload)
-            VALUES (?,?,?,?,?,?,?)''',
-            (iid,author,now,now,'SUBMITTING',
-             'Підготовлено два ордери; потрібна звірка BingX',
-             json.dumps(payload, ensure_ascii=False, default=str)))
-        db.commit()
-        if cursor.rowcount != 1:
-            return 'SKIP', 'Ідею вже зарезервував інший LIVE-воркер; повторний ордер заборонено'
-        results=[]
-        for index, leg in enumerate(legs):
-            try:
-                reply = await exchange.open_futures(leg, sig.margin_type or cfg.risk.margin_type, configure=index==0)
-                results.append({'client_id':leg.client_id,'exchange':reply})
-                record(db,iid,author,'PENDING_VERIFY',f'Відправлено {len(results)}/2 ордерів; перевіряємо біржу',
-                       {'symbol':pair,'legs':[asdict(p) for p in legs],'responses':results})
-            except Exception as err:
-                reason=f'Біржа відхилила/не підтвердила ордер {len(results)+1}/2: {type(err).__name__}: {str(err)[:120]}; ручна звірка обов’язкова'
-                record(db,iid,author,'MANUAL_RECONCILIATION',reason,
-                       {'symbol':pair,'legs':[asdict(p) for p in legs],'responses':results})
-                return 'MANUAL_RECONCILIATION',reason
-        statuses=[]
-        for leg in legs:
-            try:
-                order=await exchange.futures_order(pair,client_order_id=leg.client_id)
-                statuses.append({'client_id':leg.client_id,'status':order.get('status'),'order':order})
-            except Exception as err:
-                statuses.append({'client_id':leg.client_id,'verification_error':str(err)[:120]})
-        record(db,iid,author,'PENDING_VERIFY','Два ордери прийняті; статус входу/SL/TP потребує контролю',
-               {'symbol':pair,'legs':[asdict(p) for p in legs],'responses':results,'orders':statuses})
-        return 'PENDING_VERIFY', 'Два ордери прийняті BingX; це ще НЕ гарантує виконання входу або SL/TP'
+            return 'CHECK', 'ONE_ENTRY_PREVIEW_CONFLICT: TV_SINGLE_ENTRY_PREVIEW=NO для LIVE; ордер не надісланий'
+        from signalbot.one_entry_live import run as run_single_entry
+        return await run_single_entry(db, iid, author, exchange, plan, info, tp1, tp2,
+                                      sig.margin_type or cfg.risk.margin_type)
     finally:
         await exchange.close()

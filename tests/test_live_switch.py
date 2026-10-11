@@ -19,5 +19,5 @@ class LiveSwitchTests(unittest.TestCase):
     def test_live_without_tv_ack_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             Path(d, 'signalbot.session').write_bytes(b'local-test-not-a-real-session')
-            with patch.object(railway_start, 'DATA', Path(d)), patch.dict(os.environ, {'TRADING_MODE':'live','OWNER_ID':'1','BINGX_LIVE_ACK':'I_UNDERSTAND_REAL_ORDERS','TV_LIVE_EXECUTION':'YES','TV_LIVE_ACK':''}):
+            with patch.object(railway_start, 'DATA', Path(d)), patch.dict(os.environ, {'TRADING_MODE':'live','OWNER_ID':'1','BINGX_LIVE_ACK':'I_UNDERSTAND_REAL_ORDERS','TV_LIVE_EXECUTION':'YES','TV_ONE_ENTRY_LIVE':'YES','TV_ONE_ENTRY_LIVE_ACK':''}):
                 with self.assertRaises(SystemExit): railway_start.guard()

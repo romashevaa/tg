@@ -10,7 +10,7 @@ from signalbot.config import load_config
 from tv_live_engine import execute, schema
 
 class FlowTests(unittest.TestCase):
-    def test_two_orders_with_protective_levels_and_no_duplicates(self):
+    def test_legacy_two_order_execution_is_disabled(self):
         ev=SimpleNamespace(category='NEW_CALL', confidence='HIGH', symbol='WLDUSDT.P', direction='LONG',
            entry=.5538, stop_loss=.4778, targets=[.6299], leverage=None, margin_type=None)
         cfg=load_config('config.toml')
@@ -27,15 +27,9 @@ class FlowTests(unittest.TestCase):
              patch('tv_smart_entry.inspect', new=AsyncMock(return_value=SimpleNamespace(status='READY_REVIEW', reason='confirmed'))):
             cfg=load_config('config.toml')
             result=asyncio.run(execute(db,'WLDTEST','author',ev,datetime.now(timezone.utc),cfg))
-            self.assertEqual(result[0],'PENDING_VERIFY')
-            self.assertEqual(x.open_futures.await_count,2)
-            one=x.open_futures.await_args_list[0].args[0]
-            two=x.open_futures.await_args_list[1].args[0]
-            self.assertEqual(one.take_profit,.59185)
-            self.assertEqual(two.take_profit,.6299)
-            self.assertAlmostEqual(one.quantity/(one.quantity+two.quantity),.8,delta=.05)
-            self.assertEqual(one.stop_loss,two.stop_loss)
-            self.assertEqual(x.open_futures.await_args_list[1].kwargs['configure'],False)
+            self.assertEqual(result[0],'CHECK')
+            self.assertIn('ONE_ENTRY_NOT_ENABLED', result[1])
+            x.open_futures.assert_not_awaited()
             second=asyncio.run(execute(db,'WLDTEST','author',ev,datetime.now(timezone.utc),cfg))
-            self.assertEqual(second[0],'PENDING_VERIFY')
-            self.assertEqual(x.open_futures.await_count,2)
+            self.assertEqual(second[0],'CHECK')
+            x.open_futures.assert_not_awaited()
