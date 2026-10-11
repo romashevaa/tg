@@ -121,7 +121,10 @@ async def execute(db, iid, author, ev, published, cfg):
         if not ((plan.stop_loss < plan.entry_price < tp1 < tp2) if plan.side=='long' else
                 (plan.stop_loss > plan.entry_price > tp1 > tp2)):
             return 'SKIP', 'TP1/TP2 або SL некоректні після округлення'
-        q1, q2 = split_quantity(plan.quantity, info.qty_precision, info.min_qty)
+        try:
+            q1, q2 = split_quantity(plan.quantity, info.qty_precision, info.min_qty)
+        except ValueError as exc:
+            return 'SKIP', f'Перевірка обсягу 80/20: {exc}; ризик не збільшуємо'
         if min(q1, q2) * plan.entry_price < info.min_notional:
             return 'SKIP', 'Частина 20% не досягає мінімального номіналу біржі'
         if await exchange.open_positions() >= cfg.risk.max_open_positions:
