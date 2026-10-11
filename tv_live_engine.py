@@ -121,6 +121,14 @@ async def execute(db, iid, author, ev, published, cfg):
         if not ((plan.stop_loss < plan.entry_price < tp1 < tp2) if plan.side=='long' else
                 (plan.stop_loss > plan.entry_price > tp1 > tp2)):
             return 'SKIP', 'TP1/TP2 або SL некоректні після округлення'
+        # Experimental one-entry strategy is preview-only: a single exchange
+        # acknowledgement cannot certify attached SL or linked partial TP exits.
+        # In this mode deliberately NEVER send an entry order.
+        if os.getenv('TV_SINGLE_ENTRY_PREVIEW') == 'YES':
+            from signalbot.one_entry import preview
+            report = preview(plan, info, tp1, tp2)
+            return 'CHECK', ('SINGLE_ENTRY_PREVIEW (NO ORDERS): '+
+                             json.dumps(report.asdict(), ensure_ascii=False))
         try:
             q1, q2 = split_quantity(plan.quantity, info.qty_precision, info.min_qty)
         except ValueError as exc:
