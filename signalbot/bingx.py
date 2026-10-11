@@ -102,6 +102,10 @@ class BingX:
             try:
                 resp = await self.http.request(method, f"{base}{path}?{query}", headers=headers)
             except (httpx.TransportError, httpx.TimeoutException) as e:
+                # A POST/DELETE may have reached the exchange before timeout.
+                # Never replay a non-idempotent write on the alternate host.
+                if method.upper() != 'GET':
+                    raise
                 last_error = e
                 continue
             body = resp.json()
@@ -312,6 +316,19 @@ class BingX:
             )
         data = await self._request("POST", "/openApi/swap/v2/trade/order", params)
         return data.get("order", data) if isinstance(data, dict) else {"raw": data}
+
+    async def place_futures_conditional(self, params: dict) -> dict:
+        """Place conditional TP only; never retry ambiguous network results.
+
+        BingX Hedge Mode forbids reduceOnly. No clientOrderId is supported for
+        conditional orders; persist exchange orderId and reconcile after writes.
+        """
+        if params.get('type') != 'TAKE_PROFIT_MARKET' or params.get('positionSide') not in ('LONG', 'SHORT'):
+            raise ValueError('Only verified Hedge TAKE_PROFIT_MARKET requests are allowed')
+        if 'reduceOnly' in params or 'clientOrderId' in params:
+            raise ValueError('Unsupported conditional order parameter')
+        data = await self._request('POST', '/openApi/swap/v2/trade/order', params)
+        return data.get('order', data) if isinstance(data, dict) else {'raw':data}
 
     async def prepare_hedge_close(self, symbol: str, side: str, expected_quantity: float) -> dict:
         """Read-only preflight: close only an exactly matched Hedge leg.

@@ -79,7 +79,10 @@ async def execute(db, iid, author, ev, published, cfg):
         return 'SKIP', 'Немає відповідного USDT-ф’ючерсу BingX'
     if cfg.trading_mode != 'live' or os.getenv('TV_LIVE_EXECUTION') != 'YES':
         return 'SHADOW', 'Торгівля TradingView не увімкнена (TRADING_MODE=live, TV_LIVE_EXECUTION=YES)'
-    if os.getenv('TV_LIVE_ACK') != 'I_ACCEPT_TWO_REAL_ORDERS':
+    if os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
+        if os.getenv('TV_ONE_ENTRY_LIVE_ACK') != 'I_ACCEPT_ONE_ENTRY_AND_TWO_TPS':
+            return 'SHADOW', 'One Entry LIVE потребує TV_ONE_ENTRY_LIVE_ACK'
+    elif os.getenv('TV_LIVE_ACK') != 'I_ACCEPT_TWO_REAL_ORDERS':
         return 'SHADOW', 'Немає підтвердження двох реальних ордерів TV_LIVE_ACK'
     # Fail closed: the legacy executor must never bypass Smart Entry after this upgrade.
     # Explicit activation is needed even when the existing LIVE environment is enabled.
@@ -129,6 +132,12 @@ async def execute(db, iid, author, ev, published, cfg):
             report = preview(plan, info, tp1, tp2)
             return 'CHECK', ('SINGLE_ENTRY_PREVIEW (NO ORDERS): '+
                              json.dumps(report.asdict(), ensure_ascii=False))
+        if os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
+            # Separate experimental strategy. Does not override the existing
+            # LIVE executor unless operator explicitly selects it.
+            from signalbot.one_entry_live import run as run_single_entry
+            return await run_single_entry(db,iid,author,exchange,plan,info,tp1,tp2,
+                sig.margin_type or cfg.risk.margin_type)
         try:
             q1, q2 = split_quantity(plan.quantity, info.qty_precision, info.min_qty)
         except ValueError as exc:
