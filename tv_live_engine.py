@@ -53,7 +53,11 @@ def fresh(published, max_age_minutes=20):
 
 
 def signal_from_evidence(ev):
-    return ParsedSignal(kind='new_signal', confidence=1, base_asset='BTC', quote_asset='USDT',
+    pair = bingx_pair(ev.symbol)
+    if not pair:
+        raise ValueError('Не вдалося визначити криптовалютний USDT-символ')
+    base = pair.removesuffix('-USDT')
+    return ParsedSignal(kind='new_signal', confidence=1, base_asset=base, quote_asset='USDT',
         market='futures', side=ev.direction.lower(), entry_type='limit',
         entry_low=float(ev.entry), entry_high=float(ev.entry), stop_loss=float(ev.stop_loss),
         take_profits=[float(t) for t in ev.targets], leverage=ev.leverage,
@@ -117,7 +121,10 @@ async def execute(db, iid, author, ev, published, cfg):
         equity = await exchange.equity('futures')
         sig = signal_from_evidence(ev)
         cid = 'tv'+hashlib.sha256(iid.encode()).hexdigest()[:24]
-        plan = build_plan(sig, info, equity, cfg.risk, cfg.validator.entry_tolerance_pct, cid)
+        try:
+            plan = build_plan(sig, info, equity, cfg.risk, cfg.validator.entry_tolerance_pct, cid)
+        except PlanError as exc:
+            return 'SKIP', f'Ризик/мінімальний обсяг/ціна входу: {exc}'
         targets = targets_80_20(ev)
         if not targets: return 'SKIP', 'Немає двох валідних Take Profit'
         tp1, tp2 = [round(float(t), info.price_precision) for t in targets]
@@ -127,6 +134,9 @@ async def execute(db, iid, author, ev, published, cfg):
         # Experimental one-entry strategy is preview-only: a single exchange
         # acknowledgement cannot certify attached SL or linked partial TP exits.
         # In this mode deliberately NEVER send an entry order.
+        if os.getenv('TV_SINGLE_ENTRY_PREVIEW') == 'YES' and os.getenv('TV_ONE_ENTRY_LIVE') == 'YES':
+            return 'CHECK', ('Конфлікт режимів: одночасно увімкнені TV_SINGLE_ENTRY_PREVIEW '
+                             'і TV_ONE_ENTRY_LIVE. Заявка не відправляється.')
         if os.getenv('TV_SINGLE_ENTRY_PREVIEW') == 'YES':
             from signalbot.one_entry import preview
             report = preview(plan, info, tp1, tp2)
