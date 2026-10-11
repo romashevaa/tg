@@ -15,11 +15,14 @@ class PreviewTests(unittest.TestCase):
         self.assertTrue(x.can_stage_exits)
     def test_small_second_leg_fails(self):
         x=preview(self.plan(2),self.market(minimum=1),110,120)
-        self.assertFalse(x.can_stage_exits)
-        self.assertIn('кількості',x.blocker)
+        self.assertTrue(x.can_stage_exits)
+        self.assertEqual(x.exit_mode, 'SINGLE_TP_100')
+        self.assertEqual(x.tp1_quantity, '2')
+        self.assertEqual(x.tp2_quantity, '0')
     def test_min_notional_per_exit(self):
         x=preview(self.plan(10),self.market(notional=300),110,120)
-        self.assertFalse(x.can_stage_exits)
+        self.assertTrue(x.can_stage_exits)
+        self.assertEqual(x.exit_mode, 'SINGLE_TP_100')
     def test_bad_direction(self):
         x=preview(self.plan(),self.market(),95,120)
         self.assertFalse(x.can_stage_exits)

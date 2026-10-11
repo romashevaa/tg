@@ -59,6 +59,22 @@ class Tests(unittest.TestCase):
         self.assertNotIn('protected',reason.lower())
         db.close()
 
+    def test_tiny_tp2_uses_one_full_exit(self):
+        db=sqlite3.connect(':memory:');schema(db)
+        exchange=AsyncMock()
+        exchange.hedge_mode.return_value=True
+        exchange.futures_positions.side_effect=[[],[{'symbol':'BTC-USDT','positionSide':'LONG','positionAmt':'0.01'}]]
+        exchange.futures_open_orders.side_effect=[[],[{'orderId':4}]]
+        exchange.open_futures.return_value={'orderId':99}
+        exchange.futures_order.return_value={'status':'FILLED'}
+        exchange.place_futures_conditional.return_value={'orderId':4}
+        info=SimpleNamespace(qty_precision=4,min_qty=.003,min_notional=1)
+        status,_=asyncio.run(run(db,'idea_tiny','author',exchange,plan(),info,85000,87000,'ISOLATED'))
+        self.assertEqual(status,'ONE_ENTRY_REVIEW')
+        self.assertEqual(exchange.place_futures_conditional.await_count,1)
+        self.assertEqual(exchange.place_futures_conditional.call_args.args[0]['quantity'],'0.01')
+        db.close()
+
     def test_timeout_never_retries(self):
         db=sqlite3.connect(':memory:');schema(db)
         exchange=AsyncMock()

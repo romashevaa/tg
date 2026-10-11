@@ -20,6 +20,7 @@ class OneEntryPreview:
     tp2_price: str
     can_stage_exits: bool
     blocker: str
+    exit_mode: str = 'SPLIT_80_20'
 
     def asdict(self):
         return asdict(self)
@@ -53,6 +54,17 @@ def preview(plan, market_info, tp1: float, tp2: float) -> OneEntryPreview:
         reason = 'Некоректна послідовність SHORT ENTRY/SL/TP'
     elif plan.side not in ('long','short'):
         reason = 'Невідомий напрямок'
-    # Even valid sizes do not imply that the exchange has placed or linked protection.
+    mode = 'SPLIT_80_20'
+    # A full-size TP1 can replace both partial exits when the 20% remainder
+    # is below the exchange minimum. This preserves the original quantity,
+    # and never leaves an unclosable dust remainder. It does not claim BE.
+    if reason and ('нижче мінімальної' in reason or 'нижче мінімального' in reason):
+        if q >= minimum and q * t1 >= min_notional and (
+            (plan.side == 'long' and stop < entry_price < t1 < t2) or
+            (plan.side == 'short' and stop > entry_price > t1 > t2)
+        ):
+            q1, q2 = q, Decimal('0')
+            mode = 'SINGLE_TP_100'
+            reason = ''
     return OneEntryPreview(plan.symbol,plan.side,str(q),str(q1),str(q2),str(stop),str(t1),str(t2),
-        not bool(reason), reason or 'Розміри дозволені; потрібна незалежна звірка входу, SL та двох TP перед LIVE')
+        not bool(reason), reason or 'Розміри пройшли перевірку; захист потрібен на біржі', mode)

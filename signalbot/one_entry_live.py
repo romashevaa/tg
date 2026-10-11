@@ -75,7 +75,7 @@ async def run(db, iid, author, exchange, plan, info, tp1, tp2, margin_type):
         return 'SKIP','Existing position/order on symbol: no co-mingling'
     payload={'strategy':'ONE_ENTRY','symbol':plan.symbol,'side':plan.side,
              'entry':asdict(plan),'sizing':report.asdict(),'tp1':tp1,'tp2':tp2,
-             'protective_stop_verified':False,'exits':[]}
+             'protective_stop_verified':False,'exits':[],'exit_mode':report.exit_mode}
     if not _reserve(db,iid,author,payload):
         return 'SKIP','Idea already claimed by another executor'
     # The attached SL parameter is sent as part of the SAME entry request.
@@ -106,7 +106,10 @@ async def run(db, iid, author, exchange, plan, info, tp1, tp2, margin_type):
         _write(db,iid,author,'MANUAL_RECONCILIATION',
              f'Order/position could not be verified: {type(exc).__name__}',payload)
         return 'MANUAL_RECONCILIATION','Cannot verify position; inspect exchange urgently'
-    for idx,(qty,price) in enumerate(((report.tp1_quantity,tp1),(report.tp2_quantity,tp2)),start=1):
+    exits_to_stage = [(report.tp1_quantity, tp1)]
+    if report.exit_mode == 'SPLIT_80_20':
+        exits_to_stage.append((report.tp2_quantity, tp2))
+    for idx,(qty,price) in enumerate(exits_to_stage,start=1):
         # Durable pre-write BEFORE each non-idempotent TP call. No clientOrderId
         # exists for conditional orders in BingX official spec.
         params=exit_order_params(plan.symbol,plan.side,qty,price)
@@ -132,9 +135,9 @@ async def run(db, iid, author, exchange, plan, info, tp1, tp2, margin_type):
         payload['protective_stop_verified']=False
         payload['take_profits_visible']=matched
         _write(db,iid,author,'ONE_ENTRY_REVIEW',
-            'Two TP requests acknowledged; SL NOT independently verified',payload)
+            'TP requests acknowledged; SL NOT independently verified',payload)
     except Exception:
         _write(db,iid,author,'MANUAL_RECONCILIATION',
             'TP read-back failed; SL/TP not certified',payload)
         return 'MANUAL_RECONCILIATION','TP read-back failed; manual exchange review necessary'
-    return 'ONE_ENTRY_REVIEW','Entry + two TP requests submitted, but SL/TP protection requires exchange-side verification'
+    return 'ONE_ENTRY_REVIEW','Entry + TP requests submitted, but SL/TP protection requires exchange-side verification'
